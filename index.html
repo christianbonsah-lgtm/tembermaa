@@ -41,6 +41,41 @@
 
     <div id="root"></div>
 
+    <!-- Firebase SDK (Version Web Modular v9+) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { 
+            getFirestore, collection, onSnapshot, addDoc, doc, updateDoc, deleteDoc, serverTimestamp 
+        } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        // Configuration de votre projet Firebase
+        const firebaseConfig = {
+            apiKey: "AIzaSyA-vf9OPzqDhaOYFYVDaSoOR-9H2QPUPow",
+            authDomain: "tembermaa-app.firebaseapp.com",
+            projectId: "tembermaa-app",
+            storageBucket: "tembermaa-app.firebasestorage.app",
+            messagingSenderId: "76903191144",
+            appId: "1:76903191144:web:9a615be1bbd8706947a1dd",
+            measurementId: "G-WWC22B0JXT"
+        };
+
+        // Initialisation de Firebase & Firestore
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        // Exposer les variables globales pour le script Babel
+        window.db = db;
+        window.fb = {
+            collection,
+            onSnapshot,
+            addDoc,
+            doc,
+            updateDoc,
+            deleteDoc,
+            serverTimestamp
+        };
+    </script>
+
     <script type="text/babel">
         const { useState, useEffect } = React;
 
@@ -53,56 +88,8 @@
             '4444': { role: 'caisse', label: 'Caisse & Facturation', icon: 'fa-cash-register' }
         };
 
-        // MENU INITIAL
-        const INITIAL_MENU = [
-            {
-                id: 1,
-                name: "Thiéboudienne Royale",
-                category: "plats",
-                price: 7500,
-                prepTime: 25,
-                desc: "Riz au poisson sénégalais, légumes du jardin, sauce tomate épicée.",
-                badge: "Signature",
-                ordersCount: 42,
-                img: "https://images.unsplash.com/photo-1604382354936-07c5d9983bd3?auto=format&fit=crop&w=800&q=80"
-            },
-            {
-                id: 2,
-                name: "Foutou Banane & Sauce Graine",
-                category: "plats",
-                price: 5500,
-                prepTime: 20,
-                desc: "Foutou de banane plantain pilé, sauce de graines de palme mijotée.",
-                badge: "Incontournable",
-                ordersCount: 38,
-                img: "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=800&q=80"
-            },
-            {
-                id: 3,
-                name: "Poulet Yassa Temberma",
-                category: "plats",
-                price: 6500,
-                prepTime: 30,
-                desc: "Poulet confit aux oignons caramélisés et citron vert, riz parfumé.",
-                badge: "Spécialité",
-                ordersCount: 29,
-                img: "https://images.unsplash.com/photo-1519708227418-c8fd9a32b7a2?auto=format&fit=crop&w=800&q=80"
-            },
-            {
-                id: 4,
-                name: "Jus Baobab & Gingembre",
-                category: "boissons",
-                price: 1500,
-                prepTime: 5,
-                desc: "Pulpe de baobab, gingembre frais, miel sauvage.",
-                badge: "Maison",
-                ordersCount: 55,
-                img: "https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?auto=format&fit=crop&w=800&q=80"
-            }
-        ];
-
         function App() {
-            const [menuList, setMenuList] = useState(INITIAL_MENU);
+            const [menuList, setMenuList] = useState([]);
             const [activeCategory, setActiveCategory] = useState('tous');
             const [cart, setCart] = useState([]);
             const [isCartOpen, setIsCartOpen] = useState(false);
@@ -144,6 +131,47 @@
                 setTimeout(() => setToast(''), 3500);
             };
 
+            // ========================================================
+            // SYNCHRONISATION FIRESTORE EN TEMPS RÉEL (5 ONGLETS / 4 PC)
+            // ========================================================
+            useEffect(() => {
+                if (!window.db || !window.fb) return;
+
+                const { collection, onSnapshot } = window.fb;
+
+                // 1. Écouter les changements sur le MENU
+                const unsubMenu = onSnapshot(collection(window.db, "menu"), (snapshot) => {
+                    const dishes = snapshot.docs.map(doc => ({ docId: doc.id, ...doc.data() }));
+                    setMenuList(dishes);
+                });
+
+                // 2. Écouter les COMMANDES
+                const unsubOrders = onSnapshot(collection(window.db, "commandes"), (snapshot) => {
+                    const cmds = snapshot.docs.map(doc => ({ docId: doc.id, ...doc.data() }));
+                    setOrders(cmds.filter(o => o.status !== 'Encaissé'));
+                    setPaidSales(cmds.filter(o => o.status === 'Encaissé'));
+                });
+
+                // 3. Écouter les RÉSERVATIONS
+                const unsubResa = onSnapshot(collection(window.db, "reservations"), (snapshot) => {
+                    const resas = snapshot.docs.map(doc => ({ docId: doc.id, ...doc.data() }));
+                    setReservations(resas);
+                });
+
+                // 4. Écouter les DEMANDES DE CONNEXION STAFF
+                const unsubStaff = onSnapshot(collection(window.db, "staff_logins"), (snapshot) => {
+                    const reqs = snapshot.docs.map(doc => ({ docId: doc.id, ...doc.data() }));
+                    setPendingLogins(reqs);
+                });
+
+                return () => {
+                    unsubMenu();
+                    unsubOrders();
+                    unsubResa();
+                    unsubStaff();
+                };
+            }, []);
+
             const addToCart = (item) => {
                 setCart(prev => {
                     const existing = prev.find(i => i.id === item.id);
@@ -166,15 +194,15 @@
                 });
             };
 
-            // Valider la commande client instantanée
-            const handleCheckout = () => {
+            // Valider la commande client instantanée (ENVOI DANS FIRESTORE)
+            const handleCheckout = async () => {
                 if (cart.length === 0) return;
                 const maxPrepTime = Math.max(...cart.map(item => item.prepTime));
                 const total = cart.reduce((acc, item) => acc + (item.price * item.qty), 0);
                 
                 const newOrder = {
                     id: 'CMD-' + Math.floor(1000 + Math.random() * 9000),
-                    items: [...cart],
+                    items: cart,
                     total: total,
                     prepTime: maxPrepTime,
                     status: 'En cuisine',
@@ -183,31 +211,26 @@
                     table: 'Table ' + Math.floor(1 + Math.random() * 12)
                 };
 
-                setMenuList(prev => prev.map(m => {
-                    const cartItem = cart.find(c => c.id === m.id);
-                    return cartItem ? { ...m, ordersCount: (m.ordersCount || 0) + cartItem.qty } : m;
-                }));
+                await window.fb.addDoc(window.fb.collection(window.db, "commandes"), newOrder);
 
-                setOrders(prev => [newOrder, ...prev]);
                 setCart([]);
                 setIsCartOpen(false);
-                showToast(`Commande ${newOrder.id} transmise en cuisine`);
+                showToast(`Commande ${newOrder.id} transmise en cuisine sur tous les postes !`);
             };
 
-            // Encaissement Caisse
-            const handleEncaisser = (orderId, modePaiement) => {
+            // Encaissement Caisse (MAJ FIRESTORE)
+            const handleEncaisser = async (orderId, modePaiement) => {
                 const targetOrder = orders.find(o => o.id === orderId);
                 if (!targetOrder) return;
 
-                const saleRecord = {
-                    ...targetOrder,
+                const orderRef = window.fb.doc(window.db, "commandes", targetOrder.docId);
+                await window.fb.updateDoc(orderRef, {
                     paidAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
                     paymentMethod: modePaiement,
-                    paymentStatus: 'Payé'
-                };
+                    paymentStatus: 'Payé',
+                    status: 'Encaissé'
+                });
 
-                setPaidSales(prev => [saleRecord, ...prev]);
-                setOrders(prev => prev.filter(o => o.id !== orderId));
                 showToast(`Commande ${orderId} encaissée (${modePaiement}) !`);
             };
 
@@ -241,32 +264,38 @@
                 showToast('Caisse clôturée avec succès !');
             };
 
-            // Soumettre une réservation (Client)
-            const handleResaSubmit = (e) => {
+            // Soumettre une réservation (Client -> FIRESTORE)
+            const handleResaSubmit = async (e) => {
                 e.preventDefault();
                 const newResa = {
                     id: 'TEMB-RES-' + Math.floor(1000 + Math.random() * 9000),
                     ...resaForm,
-                    menuItems: [...selectedResaMenu],
+                    menuItems: selectedResaMenu,
                     table: 'En attente d\'attribution',
                     status: 'En attente'
                 };
-                setReservations(prev => [newResa, ...prev]);
+
+                await window.fb.addDoc(window.fb.collection(window.db, "reservations"), newResa);
+
                 setMyResaTicket(newResa);
                 setIsResaOpen(false);
                 setSelectedResaMenu([]);
-                showToast('Demande de réservation envoyée !');
+                showToast('Demande de réservation transmise en temps réel !');
             };
 
-            // Valider réservation par Réception ou Admin avec Numéro de Table
-            const confirmReservationWithTable = (e) => {
+            // Valider réservation avec Numéro de Table (MAJ FIRESTORE)
+            const confirmReservationWithTable = async (e) => {
                 e.preventDefault();
                 if (!selectedResaToConfirm || !assignedTableInput) return;
 
                 const updatedTable = assignedTableInput.startsWith('Table') ? assignedTableInput : `Table ${assignedTableInput}`;
+                const resaRef = window.fb.doc(window.db, "reservations", selectedResaToConfirm.docId);
 
-                setReservations(prev => prev.map(r => r.id === selectedResaToConfirm.id ? { ...r, status: 'Confirmée', table: updatedTable } : r));
-                
+                await window.fb.updateDoc(resaRef, {
+                    status: 'Confirmée',
+                    table: updatedTable
+                });
+
                 if (myResaTicket && myResaTicket.id === selectedResaToConfirm.id) {
                     setMyResaTicket(prev => ({ ...prev, status: 'Confirmée', table: updatedTable }));
                 }
@@ -276,8 +305,8 @@
                 setAssignedTableInput('');
             };
 
-            // Demande de connexion staff -> Notification envoyée à l'Admin
-            const handleStaffLoginRequest = (e) => {
+            // Demande de connexion staff (ENVOI DANS FIRESTORE)
+            const handleStaffLoginRequest = async (e) => {
                 e.preventDefault();
                 const roleInfo = ROLES_INFO[pinInput];
                 if (!roleInfo) {
@@ -291,38 +320,35 @@
                     setPinInput('');
                     showToast('Bienvenue Administrateur');
                 } else {
-                    const requestId = Date.now();
-                    const newRequest = { id: requestId, pin: pinInput, ...roleInfo, timestamp: new Date().toLocaleTimeString() };
-                    setPendingLogins(prev => [...prev, newRequest]);
+                    const newRequest = { 
+                        pin: pinInput, 
+                        ...roleInfo, 
+                        timestamp: new Date().toLocaleTimeString() 
+                    };
+
+                    await window.fb.addDoc(window.fb.collection(window.db, "staff_logins"), newRequest);
+
                     setIsStaffLoginOpen(false);
                     setPinInput('');
-                    alert(`Demande de connexion envoyée à l'Administrateur pour confirmation.`);
+                    alert(`Demande de connexion transmise à l'Administrateur.`);
                 }
             };
 
-            // Approbation Admin pour connexion Staff
-            const approveStaffLogin = (req) => {
-                setPendingLogins(prev => prev.filter(p => p.id !== req.id));
+            // Approbation Admin pour connexion Staff (MAJ / SUPPRESSION FIRESTORE)
+            const approveStaffLogin = async (req) => {
+                const reqRef = window.fb.doc(window.db, "staff_logins", req.docId);
+                await window.fb.deleteDoc(reqRef);
                 showToast(`Connexion de ${req.label} confirmée !`);
             };
 
-            const rejectStaffLogin = (reqId) => {
-                setPendingLogins(prev => prev.filter(p => p.id !== reqId));
+            const rejectStaffLogin = async (reqDocId) => {
+                const reqRef = window.fb.doc(window.db, "staff_logins", reqDocId);
+                await window.fb.deleteDoc(reqRef);
                 showToast(`Demande de connexion refusée.`);
             };
 
-            // Upload image
-            const handleImageUpload = (e) => {
-                const file = e.target.files[0];
-                if (file) {
-                    const reader = new FileReader();
-                    reader.onloadend = () => setNewDish(prev => ({ ...prev, img: reader.result }));
-                    reader.readAsDataURL(file);
-                }
-            };
-
-            // Ajouter plat au menu (Admin)
-            const handleAddDishSubmit = (e) => {
+            // Ajouter plat au menu (Admin -> FIRESTORE)
+            const handleAddDishSubmit = async (e) => {
                 e.preventDefault();
                 const dishToAdd = {
                     ...newDish,
@@ -332,10 +358,12 @@
                     ordersCount: 0,
                     img: newDish.img || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=800&q=80'
                 };
-                setMenuList(prev => [dishToAdd, ...prev]);
+
+                await window.fb.addDoc(window.fb.collection(window.db, "menu"), dishToAdd);
+
                 setIsAddDishOpen(false);
                 setNewDish({ name: '', category: 'plats', price: '', prepTime: '', desc: '', badge: 'Nouveau', img: '' });
-                showToast('Nouveau plat ajouté au menu !');
+                showToast('Nouveau plat ajouté au menu sur tous les postes !');
             };
 
             const filteredMenu = activeCategory === 'tous' 
@@ -368,7 +396,6 @@
                         </nav>
 
                         <div class="flex items-center gap-3">
-                            {/* BOUTON STAFF AVEC BADGE NOTIFICATION DEMANDE D'ACCÈS */}
                             <button 
                                 onClick={() => currentStaff ? setCurrentStaff(null) : setIsStaffLoginOpen(true)}
                                 class={`relative px-3 py-1.5 rounded text-xs font-bold flex items-center gap-2 border transition ${currentStaff ? 'bg-brand-orange text-white border-brand-orange' : 'border-brand-gold/50 text-brand-gold hover:bg-brand-gold/10'}`}
@@ -397,9 +424,7 @@
                         </div>
                     </header>
 
-                    {/* ======================================================== */}
-                    {/* ESPACE DU STAFF ET COMPTES                               */}
-                    {/* ======================================================== */}
+                    {/* ESPACE STAFF OU CLIENT */}
                     {currentStaff ? (
                         <div class="p-6 max-w-7xl mx-auto w-full flex-1">
                             <div class="bg-brand-card border border-brand-border rounded-lg p-6 mb-8 flex justify-between items-center">
@@ -415,10 +440,9 @@
                                 </button>
                             </div>
 
-                            {/* 👑 VUE ADMINISTRATEUR GÉNÉRAL (0000) */}
+                            {/* VUE ADMIN (0000) */}
                             {currentStaff.role === 'admin' && (
                                 <div class="space-y-10">
-                                    {/* NOTIFICATION ET VALIDATION DEMANDES D'ACCÈS STAFF */}
                                     {pendingLogins.length > 0 ? (
                                         <div class="bg-red-950/40 border-2 border-red-600 p-6 rounded-lg animate-pulse">
                                             <h3 class="text-lg font-bold text-red-500 mb-3 flex items-center gap-2">
@@ -426,16 +450,16 @@
                                             </h3>
                                             <div class="space-y-3">
                                                 {pendingLogins.map(req => (
-                                                    <div key={req.id} class="bg-brand-dark p-4 rounded flex justify-between items-center border border-red-900/50">
+                                                    <div key={req.docId} class="bg-brand-dark p-4 rounded flex justify-between items-center border border-red-900/50">
                                                         <div>
                                                             <span class="text-white font-bold text-base">{req.label}</span>
-                                                            <p class="text-xs text-stone-400">Demande effectuée à {req.timestamp} (Code PIN saisi)</p>
+                                                            <p class="text-xs text-stone-400">Demande effectuée à {req.timestamp}</p>
                                                         </div>
                                                         <div class="flex gap-2">
                                                             <button onClick={() => approveStaffLogin(req)} class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2 rounded flex items-center gap-1">
                                                                 <i class="fa-solid fa-check"></i> Autoriser la connexion
                                                             </button>
-                                                            <button onClick={() => rejectStaffLogin(req.id)} class="bg-stone-800 hover:bg-stone-700 text-stone-300 font-bold text-xs px-3 py-2 rounded">
+                                                            <button onClick={() => rejectStaffLogin(req.docId)} class="bg-stone-800 hover:bg-stone-700 text-stone-300 font-bold text-xs px-3 py-2 rounded">
                                                                 Refuser
                                                             </button>
                                                         </div>
@@ -449,19 +473,16 @@
                                         </div>
                                     )}
 
-                                    {/* SECTION GESTION RÉSERVATIONS ADMIN */}
                                     <div class="bg-brand-card p-6 rounded-lg border border-brand-border">
-                                        <div class="flex justify-between items-center mb-4">
-                                            <h3 class="text-lg font-bold text-brand-gold flex items-center gap-2">
-                                                <i class="fa-solid fa-bell"></i> Notifications & Gestion des Réservations ({pendingReservationsCount} en attente)
-                                            </h3>
-                                        </div>
+                                        <h3 class="text-lg font-bold text-brand-gold mb-4 flex items-center gap-2">
+                                            <i class="fa-solid fa-bell"></i> Notifications & Gestion des Réservations ({pendingReservationsCount})
+                                        </h3>
                                         {reservations.length === 0 ? (
-                                            <p class="text-stone-500 text-xs">Aucune réservation pour le moment.</p>
+                                            <p class="text-stone-500 text-xs">Aucune réservation reçue.</p>
                                         ) : (
                                             <div class="space-y-3">
                                                 {reservations.map(res => (
-                                                    <div key={res.id} class="bg-brand-dark border border-brand-border p-4 rounded-lg flex flex-col md:flex-row justify-between md:items-center gap-4">
+                                                    <div key={res.docId} class="bg-brand-dark border border-brand-border p-4 rounded-lg flex flex-col md:flex-row justify-between md:items-center gap-4">
                                                         <div>
                                                             <div class="flex items-center gap-2">
                                                                 <span class="text-xs font-bold text-brand-gold">{res.id}</span>
@@ -470,15 +491,10 @@
                                                             <h4 class="font-bold text-white text-sm mt-1">{res.name} ({res.guests} personnes)</h4>
                                                             <p class="text-xs text-stone-400">{res.date} à {res.time} · Tél: {res.phone}</p>
                                                             <p class="text-xs text-brand-gold mt-1 font-semibold">Table : {res.table}</p>
-                                                            {res.menuItems && res.menuItems.length > 0 && (
-                                                                <div class="mt-2 text-xs bg-stone-900/80 p-2 rounded border border-stone-800 text-stone-300">
-                                                                    <strong>Menu pré-sélectionné :</strong> {res.menuItems.map(m => m.name).join(', ')}
-                                                                </div>
-                                                            )}
                                                         </div>
                                                         {res.status === 'En attente' && (
-                                                            <button onClick={() => setSelectedResaToConfirm(res)} class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2 rounded whitespace-nowrap">
-                                                                Valider & Attribuer une Table
+                                                            <button onClick={() => setSelectedResaToConfirm(res)} class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2 rounded">
+                                                                Valider & Attribuer Table
                                                             </button>
                                                         )}
                                                     </div>
@@ -486,477 +502,95 @@
                                             </div>
                                         )}
                                     </div>
-
-                                    <div class="flex justify-between items-center">
-                                        <h3 class="text-xl font-bold text-brand-gold"><i class="fa-solid fa-chart-line"></i> Performance & Menu</h3>
-                                        <button onClick={() => setIsAddDishOpen(true)} class="bg-brand-gold text-black font-bold px-4 py-2 rounded text-sm hover:bg-brand-gold-hover">
-                                            <i class="fa-solid fa-plus mr-1"></i> Ajouter un plat au Menu
-                                        </button>
-                                    </div>
-
-                                    <div class="grid md:grid-cols-2 gap-6">
-                                        <div class="bg-brand-card p-6 rounded-lg border border-brand-border">
-                                            <h4 class="text-sm font-bold text-stone-400 mb-4 uppercase">🔥 Top Plats commandés</h4>
-                                            <div class="space-y-3">
-                                                {[...menuList].sort((a,b) => b.ordersCount - a.ordersCount).map(item => (
-                                                    <div key={item.id} class="flex justify-between items-center bg-brand-dark p-3 rounded">
-                                                        <div class="flex items-center gap-3">
-                                                            <img src={item.img} class="w-10 h-10 object-cover rounded" />
-                                                            <span class="text-sm font-bold text-white">{item.name}</span>
-                                                        </div>
-                                                        <span class="text-xs bg-brand-gold/20 text-brand-gold px-2.5 py-1 rounded font-bold">{item.ordersCount} commandes</span>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-
-                                        <div class="bg-brand-card p-6 rounded-lg border border-brand-border flex flex-col justify-between">
-                                            <div>
-                                                <h4 class="text-sm font-bold text-stone-400 mb-4 uppercase">📊 Chiffre d'Affaires Caisse</h4>
-                                                <div class="text-3xl font-bold text-brand-gold mb-2">
-                                                    {paidSales.reduce((a,b) => a + b.total, 0).toLocaleString()} FCFA
-                                                </div>
-                                                <p class="text-xs text-stone-400">{paidSales.length} encaissements réussis</p>
-                                            </div>
-                                        </div>
-                                    </div>
                                 </div>
                             )}
 
-                            {/* 🛎️ VUE RÉCEPTION (2222) - REÇOIT & CONFIRME LES RÉSERVATIONS AVEC NUMÉRO DE TABLE */}
-                            {currentStaff.role === 'reception' && (
-                                <div class="space-y-6">
-                                    <div class="flex justify-between items-center bg-brand-card p-6 rounded-lg border border-brand-border">
-                                        <div>
-                                            <h3 class="text-xl font-bold text-brand-gold"><i class="fa-solid fa-concierge-bell mr-2"></i>Gestion des Réservations Client</h3>
-                                            <p class="text-xs text-stone-400">Validez les réservations et attribuez les numéros de table</p>
-                                        </div>
-                                        {pendingReservationsCount > 0 && (
-                                            <span class="bg-brand-orange text-white text-xs font-bold px-3 py-1.5 rounded-full animate-bounce">
-                                                {pendingReservationsCount} Nouvelle(s) demande(s) !
-                                            </span>
-                                        )}
-                                    </div>
-
-                                    {reservations.length === 0 ? (
-                                        <p class="text-stone-500 bg-brand-card p-6 rounded border border-brand-border text-sm">Aucune demande de réservation reçue.</p>
-                                    ) : (
-                                        <div class="space-y-4">
-                                            {reservations.map(res => (
-                                                <div key={res.id} class="bg-brand-card border border-brand-border p-5 rounded-lg flex flex-col md:flex-row justify-between md:items-center gap-4">
-                                                    <div>
-                                                        <div class="flex items-center gap-2">
-                                                            <span class="text-xs font-bold text-brand-gold">{res.id}</span>
-                                                            <span class={`text-[10px] px-2.5 py-0.5 rounded font-bold ${res.status === 'Confirmée' ? 'bg-emerald-900 text-emerald-400' : 'bg-brand-orange/20 text-brand-orange border border-brand-orange/30'}`}>{res.status}</span>
-                                                        </div>
-                                                        <h4 class="font-bold text-white text-lg mt-1">{res.name} ({res.guests} pers.)</h4>
-                                                        <p class="text-xs text-stone-400">{res.date} à {res.time} · Tél: {res.phone}</p>
-                                                        <p class="text-xs text-brand-gold font-bold mt-1">Table assignée : {res.table}</p>
-                                                        
-                                                        {res.menuItems && res.menuItems.length > 0 && (
-                                                            <div class="mt-3 text-xs bg-brand-dark p-2.5 rounded border border-brand-border">
-                                                                <span class="text-stone-400 font-bold block mb-1">Plats choisis par le client :</span>
-                                                                <ul class="list-disc list-inside text-stone-300">
-                                                                    {res.menuItems.map((m, idx) => <li key={idx}>{m.name} ({m.price.toLocaleString()} FCFA)</li>)}
-                                                                </ul>
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                    {res.status === 'En attente' && (
-                                                        <button onClick={() => setSelectedResaToConfirm(res)} class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2.5 rounded">
-                                                            Attribuer une table & Confirmer
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
-                                </div>
-                            )}
-
-                            {/* 💳 VUE CAISSE & FACTURATION (4444) */}
+                            {/* VUE CAISSE (4444) */}
                             {currentStaff.role === 'caisse' && (
                                 <div class="space-y-8">
-                                    <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-brand-card p-6 rounded-lg border border-brand-border">
+                                    <div class="flex justify-between items-center bg-brand-card p-6 rounded-lg border border-brand-border">
                                         <div>
-                                            <h3 class="text-xl font-bold text-brand-gold"><i class="fa-solid fa-cash-register mr-2"></i>Gestion de la Caisse en Direct</h3>
-                                            <p class="text-xs text-stone-400">Encaissez les clients et effectuez le bilan de fin de service</p>
+                                            <h3 class="text-xl font-bold text-brand-gold"><i class="fa-solid fa-cash-register mr-2"></i>Gestion de la Caisse</h3>
+                                            <p class="text-xs text-stone-400">Encaissements en direct depuis les 5 postes</p>
                                         </div>
-                                        <button onClick={() => setIsCloseShiftOpen(true)} class="bg-brand-orange hover:bg-orange-700 text-white font-bold px-5 py-2.5 rounded text-sm flex items-center gap-2">
-                                            <i class="fa-solid fa-calculator"></i> Clôturer la Caisse & Faire les Comptes
-                                        </button>
                                     </div>
 
-                                    <div>
-                                        <h4 class="text-md font-bold text-white mb-3 flex items-center gap-2">
-                                            <i class="fa-solid fa-hourglass-half text-brand-gold"></i> Commandes en attente de paiement ({orders.length})
-                                        </h4>
-                                        {orders.length === 0 ? (
-                                            <p class="text-stone-500 text-sm bg-brand-card p-4 rounded border border-brand-border">Toutes les commandes en cours ont été réglées.</p>
-                                        ) : (
-                                            <div class="grid md:grid-cols-2 gap-4">
-                                                {orders.map(ord => (
-                                                    <div key={ord.id} class="bg-brand-card border border-brand-border p-4 rounded-lg flex justify-between items-center">
-                                                        <div>
-                                                            <div class="flex items-center gap-2">
-                                                                <span class="font-bold text-white">{ord.id}</span>
-                                                                <span class="text-xs bg-stone-800 text-brand-gold px-2 py-0.5 rounded">{ord.table}</span>
-                                                            </div>
-                                                            <p class="text-xs text-stone-400 mt-1">{ord.items.map(i => `${i.qty}x ${i.name}`).join(', ')}</p>
-                                                            <div class="text-brand-gold font-bold text-lg mt-2">{ord.total.toLocaleString()} FCFA</div>
-                                                        </div>
-                                                        <div class="flex flex-col gap-1.5">
-                                                            <button onClick={() => handleEncaisser(ord.id, 'Espèces')} class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded">
-                                                                💵 Espèces
-                                                            </button>
-                                                            <button onClick={() => handleEncaisser(ord.id, 'Mobile Money')} class="bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold px-3 py-1.5 rounded">
-                                                                📱 Mobile Money
-                                                            </button>
-                                                            <button onClick={() => handleEncaisser(ord.id, 'Carte')} class="bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold px-3 py-1.5 rounded">
-                                                                💳 Carte
-                                                            </button>
-                                                        </div>
+                                    <div class="grid md:grid-cols-2 gap-4">
+                                        {orders.map(ord => (
+                                            <div key={ord.docId} class="bg-brand-card border border-brand-border p-4 rounded-lg flex justify-between items-center">
+                                                <div>
+                                                    <div class="flex items-center gap-2">
+                                                        <span class="font-bold text-white">{ord.id}</span>
+                                                        <span class="text-xs bg-stone-800 text-brand-gold px-2 py-0.5 rounded">{ord.table}</span>
                                                     </div>
-                                                ))}
+                                                    <p class="text-xs text-stone-400 mt-1">{ord.items.map(i => `${i.qty}x ${i.name}`).join(', ')}</p>
+                                                    <div class="text-brand-gold font-bold text-lg mt-2">{ord.total.toLocaleString()} FCFA</div>
+                                                </div>
+                                                <div class="flex flex-col gap-1">
+                                                    <button onClick={() => handleEncaisser(ord.id, 'Espèces')} class="bg-emerald-600 text-white text-xs font-bold px-3 py-1.5 rounded">Espèces</button>
+                                                    <button onClick={() => handleEncaisser(ord.id, 'Mobile Money')} class="bg-sky-600 text-white text-xs font-bold px-3 py-1.5 rounded">Mobile Money</button>
+                                                </div>
                                             </div>
-                                        )}
-                                    </div>
-
-                                    <div>
-                                        <h4 class="text-md font-bold text-white mb-3 flex items-center gap-2">
-                                            <i class="fa-solid fa-receipt text-brand-gold"></i> Historique des Ventes de la Session ({paidSales.length})
-                                        </h4>
-                                        {paidSales.length === 0 ? (
-                                            <p class="text-stone-500 text-sm bg-brand-card p-4 rounded border border-brand-border">Aucun encaissement effectué pour le moment dans cette session.</p>
-                                        ) : (
-                                            <div class="bg-brand-card border border-brand-border rounded-lg overflow-x-auto">
-                                                <table class="w-full text-left text-xs">
-                                                    <thead class="bg-brand-dark text-brand-gold uppercase border-b border-brand-border">
-                                                        <tr>
-                                                            <th class="p-3">Heure</th>
-                                                            <th class="p-3">N° Commande</th>
-                                                            <th class="p-3">Table</th>
-                                                            <th class="p-3">Mode de Paiement</th>
-                                                            <th class="p-3 text-right">Montant Total</th>
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody class="divide-y divide-brand-border text-stone-300">
-                                                        {paidSales.map(sale => (
-                                                            <tr key={sale.id} class="hover:bg-brand-dark/50">
-                                                                <td class="p-3 font-mono">{sale.paidAt}</td>
-                                                                <td class="p-3 font-bold text-white">{sale.id}</td>
-                                                                <td class="p-3">{sale.table}</td>
-                                                                <td class="p-3">
-                                                                    <span class="bg-brand-dark px-2 py-1 rounded border border-stone-700 font-bold text-brand-gold">
-                                                                        {sale.paymentMethod}
-                                                                    </span>
-                                                                </td>
-                                                                <td class="p-3 text-right font-bold text-white">{sale.total.toLocaleString()} FCFA</td>
-                                                            </tr>
-                                                        ))}
-                                                    </tbody>
-                                                </table>
-                                            </div>
-                                        )}
+                                        ))}
                                     </div>
                                 </div>
                             )}
 
-                            {/* 👩‍🍳 VUE CUISINE (1111) */}
+                            {/* VUE CUISINE (1111) */}
                             {currentStaff.role === 'cuisine' && (
                                 <div>
-                                    <h3 class="text-xl font-bold text-brand-gold mb-4"><i class="fa-solid fa-fire-burner"></i> Plats en Préparation</h3>
-                                    {orders.filter(o => o.status === 'En cuisine').length === 0 ? (
-                                        <p class="text-stone-500 bg-brand-card p-6 rounded border border-brand-border text-sm">Aucune commande en attente.</p>
-                                    ) : (
-                                        <div class="grid md:grid-cols-2 gap-6">
-                                            {orders.filter(o => o.status === 'En cuisine').map(ord => (
-                                                <div key={ord.id} class="bg-brand-card border-2 border-brand-orange p-5 rounded-lg">
-                                                    <div class="flex justify-between mb-3 font-bold text-white">
-                                                        <span>{ord.id} ({ord.table})</span>
-                                                        <span class="text-xs text-brand-orange">{ord.createdAt}</span>
-                                                    </div>
-                                                    <ul class="text-sm space-y-1 mb-4">
-                                                        {ord.items.map((it, idx) => <li key={idx}>• <strong>{it.qty}x</strong> {it.name}</li>)}
-                                                    </ul>
-                                                    <button onClick={() => setOrders(prev => prev.map(o => o.id === ord.id ? {...o, status: 'Prêt à servir'} : o))} class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded text-sm">
-                                                        Marquer comme Prêt
-                                                    </button>
+                                    <h3 class="text-xl font-bold text-brand-gold mb-4"><i class="fa-solid fa-fire-burner"></i> En Cuisine</h3>
+                                    <div class="grid md:grid-cols-2 gap-6">
+                                        {orders.filter(o => o.status === 'En cuisine').map(ord => (
+                                            <div key={ord.docId} class="bg-brand-card border-2 border-brand-orange p-5 rounded-lg">
+                                                <div class="flex justify-between mb-3 font-bold text-white">
+                                                    <span>{ord.id} ({ord.table})</span>
+                                                    <span class="text-xs text-brand-orange">{ord.createdAt}</span>
                                                 </div>
-                                            ))}
-                                        </div>
-                                    )}
+                                                <ul class="text-sm space-y-1 mb-4">
+                                                    {ord.items.map((it, idx) => <li key={idx}>• <strong>{it.qty}x</strong> {it.name}</li>)}
+                                                </ul>
+                                                <button onClick={async () => {
+                                                    const ref = window.fb.doc(window.db, "commandes", ord.docId);
+                                                    await window.fb.updateDoc(ref, { status: 'Prêt à servir' });
+                                                }} class="w-full bg-emerald-600 text-white font-bold py-2 rounded text-sm">
+                                                    Marquer comme Prêt
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
                                 </div>
                             )}
                         </div>
                     ) : (
-                        /* ======================================================== */
-                        /* SECTION CLIENT CLASSIQUE                                 */
-                        /* ======================================================== */
+                        /* SECTION CLIENT */
                         <>
                             <section id="accueil" class="relative h-[85vh] flex items-center justify-center text-center px-4 bg-cover bg-center" style={{ backgroundImage: `linear-gradient(rgba(18, 10, 7, 0.75), rgba(18, 10, 7, 0.85)), url('https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=1350&q=80')` }}>
                                 <div class="max-w-3xl">
                                     <span class="text-brand-gold text-xs md:text-sm font-bold tracking-[0.3em] uppercase block mb-3">CUISINE AFRICAINE RAFFINÉE</span>
                                     <h1 class="text-4xl md:text-6xl font-serif font-bold text-white mb-6 leading-tight">L'Âme de l'Atacora dans votre assiette</h1>
-                                    <p class="text-stone-300 text-base md:text-lg mb-8 max-w-2xl mx-auto">Inspiré des Tata Temberma, forteresses millénaires classées UNESCO, notre restaurant célèbre la richesse culinaire de l'Afrique de l'Ouest.</p>
                                     <div class="flex flex-col sm:flex-row gap-4 justify-center">
-                                        <a href="#menu" class="bg-brand-gold hover:bg-brand-gold-hover text-black font-bold px-6 py-3 rounded transition">VOIR LE MENU</a>
-                                        <button onClick={() => setIsResaOpen(true)} class="border border-brand-gold text-brand-gold hover:bg-brand-gold hover:text-black font-bold px-6 py-3 rounded transition">RÉSERVER UNE TABLE</button>
+                                        <a href="#menu" class="bg-brand-gold text-black font-bold px-6 py-3 rounded">VOIR LE MENU</a>
+                                        <button onClick={() => setIsResaOpen(true)} class="border border-brand-gold text-brand-gold font-bold px-6 py-3 rounded">RÉSERVER UNE TABLE</button>
                                     </div>
                                 </div>
                             </section>
 
-                            {/* TICKET CLIENT RÉSERVATION */}
-                            {myResaTicket && (
-                                <div class="max-w-xl mx-auto my-8 px-6">
-                                    <div class="bg-brand-card border-2 border-brand-gold rounded-lg p-6 text-center shadow-2xl">
-                                        <h3 class="text-xl font-serif font-bold text-brand-gold mb-1">Votre Ticket de Réservation TEMBERMA</h3>
-                                        <p class="text-xs text-stone-400 mb-4">À présenter à votre arrivée à l'accueil</p>
-
-                                        <div class={`p-2 rounded text-xs font-bold mb-4 ${myResaTicket.status === 'Confirmée' ? 'bg-emerald-900/50 text-emerald-400 border border-emerald-700' : 'bg-brand-orange/20 text-brand-orange border border-brand-orange/40 animate-pulse'}`}>
-                                            Statut : {myResaTicket.status === 'Confirmée' ? 'RÉSERVATION CONFIRMÉE' : 'EN ATTENTE DE CONFIRMATION DU RÉCEPTIONNISTE / ADMIN'}
-                                        </div>
-
-                                        <div class="bg-brand-dark p-4 rounded text-left font-mono text-xs text-stone-300 space-y-2 mb-4">
-                                            <div class="flex justify-between border-b border-stone-800 pb-2">
-                                                <span>N° PASS CLIENT :</span>
-                                                <strong class="text-brand-gold text-sm">{myResaTicket.id}</strong>
-                                            </div>
-                                            <p><strong>Nom :</strong> {myResaTicket.name}</p>
-                                            <p><strong>Date & Heure :</strong> {myResaTicket.date} à {myResaTicket.time}</p>
-                                            <p class="text-brand-gold text-sm font-bold"><strong>Table Attribuée :</strong> {myResaTicket.table}</p>
-                                            
-                                            {myResaTicket.menuItems && myResaTicket.menuItems.length > 0 && (
-                                                <div class="pt-2 border-t border-stone-800">
-                                                    <strong>Plats pré-sélectionnés :</strong>
-                                                    <ul class="list-disc list-inside mt-1 text-stone-400">
-                                                        {myResaTicket.menuItems.map((m, idx) => <li key={idx}>{m.name}</li>)}
-                                                    </ul>
-                                                </div>
-                                            )}
-                                        </div>
-
-                                        <button onClick={() => setMyResaTicket(null)} class="text-xs text-stone-500 underline">Masquer le ticket</button>
-                                    </div>
-                                </div>
-                            )}
-
                             <section id="menu" class="py-20 px-6 max-w-7xl mx-auto w-full">
-                                <div class="text-center mb-12">
-                                    <h2 class="text-3xl md:text-4xl font-serif text-brand-gold font-bold mb-2">Une Symphonie de Saveurs</h2>
-                                    <div class="flex justify-center gap-3 mt-8 flex-wrap">
-                                        {['tous', 'plats', 'boissons', 'desserts'].map(cat => (
-                                            <button key={cat} onClick={() => setActiveCategory(cat)} class={`px-5 py-2 rounded-full text-sm font-semibold capitalize transition ${activeCategory === cat ? 'bg-brand-gold text-black' : 'bg-brand-card text-stone-300 border border-brand-border hover:border-brand-gold'}`}>
-                                                {cat}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-
                                 <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
                                     {filteredMenu.map(item => (
-                                        <div key={item.id} class="bg-brand-card border border-brand-border rounded-lg overflow-hidden flex flex-col hover:border-brand-gold/50 transition">
-                                            <div class="relative h-48 overflow-hidden">
-                                                <img src={item.img} alt={item.name} class="w-full h-full object-cover hover:scale-105 transition duration-500" />
-                                                <span class="absolute top-3 left-3 bg-brand-gold/90 text-black text-xs font-bold px-2.5 py-1 rounded-full">{item.badge}</span>
-                                            </div>
-                                            <div class="p-6 flex-1 flex flex-col justify-between">
-                                                <div>
-                                                    <div class="flex justify-between items-start mb-2">
-                                                        <h3 class="font-bold text-lg text-white">{item.name}</h3>
-                                                        <span class="text-brand-gold font-bold text-sm whitespace-nowrap ml-2">{item.price.toLocaleString()} FCFA</span>
-                                                    </div>
-                                                    <p class="text-stone-400 text-xs mb-4">{item.desc}</p>
-                                                </div>
-                                                <div>
-                                                    <div class="text-xs text-stone-500 mb-4 flex items-center gap-1">
-                                                        <i class="fa-regular fa-clock"></i> Temps : ~{item.prepTime} min
-                                                    </div>
-                                                    <button onClick={() => addToCart(item)} class="w-full bg-brand-gold/10 hover:bg-brand-gold text-brand-gold hover:text-black border border-brand-gold/30 font-bold py-2 rounded transition text-sm flex items-center justify-center gap-2">
-                                                        <i class="fa-solid fa-plus"></i> Commander ce plat
-                                                    </button>
-                                                </div>
-                                            </div>
+                                        <div key={item.docId || item.id} class="bg-brand-card border border-brand-border rounded-lg overflow-hidden flex flex-col p-4">
+                                            <img src={item.img} class="w-full h-48 object-cover rounded mb-4" />
+                                            <h3 class="font-bold text-lg text-white">{item.name}</h3>
+                                            <p class="text-brand-gold font-bold mb-2">{item.price.toLocaleString()} FCFA</p>
+                                            <button onClick={() => addToCart(item)} class="w-full bg-brand-gold/10 text-brand-gold border border-brand-gold/30 font-bold py-2 rounded">
+                                                Commander ce plat
+                                            </button>
                                         </div>
                                     ))}
                                 </div>
                             </section>
                         </>
-                    )}
-
-                    {/* ======================================================== */}
-                    {/* MODALES ET POPUPS                                        */}
-                    {/* ======================================================== */}
-
-                    {/* MODALE VALIDATION RÉSERVATION AVEC ATTRIBUTION DE TABLE (ADMIN / RÉCEPTION) */}
-                    {selectedResaToConfirm && (
-                        <div class="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
-                            <div class="bg-brand-card border border-brand-gold rounded-lg p-6 max-w-md w-full relative">
-                                <button onClick={() => setSelectedResaToConfirm(null)} class="absolute top-4 right-4 text-stone-400 hover:text-white">&times;</button>
-                                <h3 class="text-xl font-bold text-brand-gold mb-2">Confirmation de la Réservation</h3>
-                                <p class="text-xs text-stone-300 mb-4">Attribuez un numéro de table pour le client <strong>{selectedResaToConfirm.name}</strong></p>
-
-                                <form onSubmit={confirmReservationWithTable} class="space-y-4">
-                                    <div>
-                                        <label class="block text-xs text-stone-400 font-bold mb-1">Numéro de Table attribué :</label>
-                                        <input 
-                                            type="text" 
-                                            required 
-                                            placeholder="Ex: Table VIP 2 ou Table 5" 
-                                            value={assignedTableInput} 
-                                            onChange={e => setAssignedTableInput(e.target.value)}
-                                            class="w-full bg-brand-dark border border-brand-border rounded p-3 text-white text-sm font-bold focus:border-brand-gold outline-none"
-                                        />
-                                    </div>
-
-                                    <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded text-sm uppercase">
-                                        Valider la réservation & Éditer le Ticket
-                                    </button>
-                                </form>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* MODALE DU FORMULAIRE DE RÉSERVATION CLIENT AVEC CHOIX DU MENU */}
-                    {isResaOpen && (
-                        <div class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-                            <div class="bg-brand-card border border-brand-border rounded-lg p-6 max-w-lg w-full relative max-h-[90vh] overflow-y-auto">
-                                <button onClick={() => setIsResaOpen(false)} class="absolute top-4 right-4 text-stone-400 hover:text-white">&times;</button>
-                                <h3 class="text-2xl font-serif text-brand-gold font-bold mb-1">Réserver une Table chez TEMBERMA</h3>
-                                <p class="text-xs text-stone-400 mb-4">Remplissez vos coordonnées et choisissez vos plats en avance (optionnel)</p>
-
-                                <form onSubmit={handleResaSubmit} class="space-y-4">
-                                    <div>
-                                        <label class="block text-xs text-stone-400 mb-1">Nom Complet</label>
-                                        <input type="text" required value={resaForm.name} onChange={e => setResaForm({...resaForm, name: e.target.value})} class="w-full bg-brand-dark border border-brand-border rounded p-2 text-white text-sm" />
-                                    </div>
-                                    <div class="grid grid-cols-2 gap-4">
-                                        <div>
-                                            <label class="block text-xs text-stone-400 mb-1">Téléphone</label>
-                                            <input type="tel" required value={resaForm.phone} onChange={e => setResaForm({...resaForm, phone: e.target.value})} class="w-full bg-brand-dark border border-brand-border rounded p-2 text-white text-sm" />
-                                        </div>
-                                        <div>
-                                            <label class="block text-xs text-stone-400 mb-1">Nombre de personnes</label>
-                                            <input type="number" min="1" required value={resaForm.guests} onChange={e => setResaForm({...resaForm, guests: e.target.value})} class="w-full bg-brand-dark border border-brand-border rounded p-2 text-white text-sm" />
-                                        </div>
-                                    </div>
-                                    <div class="grid grid-cols-2 gap-4">
-                                        <div>
-                                            <label class="block text-xs text-stone-400 mb-1">Date</label>
-                                            <input type="date" required value={resaForm.date} onChange={e => setResaForm({...resaForm, date: e.target.value})} class="w-full bg-brand-dark border border-brand-border rounded p-2 text-white text-sm" />
-                                        </div>
-                                        <div>
-                                            <label class="block text-xs text-stone-400 mb-1">Heure</label>
-                                            <input type="time" required value={resaForm.time} onChange={e => setResaForm({...resaForm, time: e.target.value})} class="w-full bg-brand-dark border border-brand-border rounded p-2 text-white text-sm" />
-                                        </div>
-                                    </div>
-
-                                    {/* CHOIX DU MENU POUR LA RÉSERVATION */}
-                                    <div class="pt-2 border-t border-brand-border">
-                                        <label class="block text-xs font-bold text-brand-gold mb-2">Pré-sélectionner vos Plats (Optionnel) :</label>
-                                        <div class="space-y-2 max-h-40 overflow-y-auto pr-1">
-                                            {menuList.map(item => {
-                                                const isSelected = selectedResaMenu.some(m => m.id === item.id);
-                                                return (
-                                                    <div 
-                                                        key={item.id} 
-                                                        onClick={() => toggleResaMenuItem(item)}
-                                                        class={`p-2 rounded border text-xs flex justify-between items-center cursor-pointer transition ${isSelected ? 'bg-brand-gold/20 border-brand-gold text-white' : 'bg-brand-dark border-brand-border text-stone-400 hover:border-stone-600'}`}
-                                                    >
-                                                        <span>{item.name}</span>
-                                                        <span class="font-bold">{item.price.toLocaleString()} FCFA</span>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
-
-                                    <button type="submit" class="w-full bg-brand-gold text-black font-bold py-3 rounded mt-4">
-                                        Envoyer la Demande de Réservation
-                                    </button>
-                                </form>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* MODALE CLÔTURE CAISSE */}
-                    {isCloseShiftOpen && (
-                        <div class="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
-                            <div class="bg-brand-card border border-brand-gold rounded-lg p-6 max-w-lg w-full relative max-h-[90vh] overflow-y-auto">
-                                <button onClick={() => setIsCloseShiftOpen(false)} class="absolute top-4 right-4 text-stone-400 hover:text-white">&times;</button>
-                                <h3 class="text-2xl font-serif text-brand-gold font-bold mb-1"><i class="fa-solid fa-calculator mr-2"></i>Clôture de Caisse & Bilans</h3>
-                                <p class="text-xs text-stone-400 mb-6">Récapitulatif financier de la session avant fermeture</p>
-
-                                <div class="bg-brand-dark p-4 rounded border border-brand-border space-y-3 font-mono text-xs mb-6">
-                                    <div class="flex justify-between">
-                                        <span>Nombre Total de Ventes :</span>
-                                        <strong class="text-white">{paidSales.length} ventes</strong>
-                                    </div>
-                                    <div class="flex justify-between text-emerald-400">
-                                        <span>Encaissements Espèces :</span>
-                                        <strong>{paidSales.filter(s => s.paymentMethod === 'Espèces').reduce((a,b) => a + b.total, 0).toLocaleString()} FCFA</strong>
-                                    </div>
-                                    <div class="flex justify-between text-sky-400">
-                                        <span>Encaissements Mobile Money :</span>
-                                        <strong>{paidSales.filter(s => s.paymentMethod === 'Mobile Money').reduce((a,b) => a + b.total, 0).toLocaleString()} FCFA</strong>
-                                    </div>
-                                    <div class="flex justify-between text-purple-400">
-                                        <span>Encaissements Carte :</span>
-                                        <strong>{paidSales.filter(s => s.paymentMethod === 'Carte').reduce((a,b) => a + b.total, 0).toLocaleString()} FCFA</strong>
-                                    </div>
-                                    <div class="border-t border-stone-800 pt-2 flex justify-between text-base text-brand-gold font-bold">
-                                        <span>SOMME FINALE EN MACHINE :</span>
-                                        <span>{paidSales.reduce((a,b) => a + b.total, 0).toLocaleString()} FCFA</span>
-                                    </div>
-                                </div>
-
-                                <form onSubmit={handleClotureCaisse} class="space-y-4">
-                                    <div>
-                                        <label class="block text-xs text-stone-300 font-bold mb-1">Comptage Physique Espèces dans le Tiroir (FCFA)</label>
-                                        <input 
-                                            type="number" 
-                                            required 
-                                            value={cashCountInput} 
-                                            onChange={e => setCashCountInput(e.target.value)} 
-                                            placeholder="Entrez le montant réel compté" 
-                                            class="w-full bg-brand-dark border border-brand-border rounded p-3 text-white text-base font-bold focus:border-brand-gold outline-none"
-                                        />
-                                    </div>
-
-                                    <button type="submit" class="w-full bg-brand-orange hover:bg-orange-700 text-white font-bold py-3 rounded text-sm uppercase tracking-wider">
-                                        Valider la Clôture & Archiver la Session
-                                    </button>
-                                </form>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* RAPPORT DE CLÔTURE PRINTABLE */}
-                    {lastShiftReport && (
-                        <div class="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4">
-                            <div class="bg-white text-black p-8 rounded-lg max-w-md w-full font-mono text-xs space-y-4 shadow-2xl">
-                                <div class="text-center border-b border-black pb-4">
-                                    <h2 class="text-xl font-bold uppercase">TEMBERMA LOMÉ</h2>
-                                    <p class="text-[10px]">Rapport de Clôture Caisse</p>
-                                    <p class="text-[10px]">{lastShiftReport.date} - {lastShiftReport.time}</p>
-                                </div>
-                                <div class="space-y-1">
-                                    <p>N° Rapport : {lastShiftReport.id}</p>
-                                    <p>Ventes réalisées : {lastShiftReport.totalSalesCount}</p>
-                                    <p>Espèces : {lastShiftReport.totalEspeces.toLocaleString()} FCFA</p>
-                                    <p>Mobile Money : {lastShiftReport.totalMobile.toLocaleString()} FCFA</p>
-                                    <p>Carte : {lastShiftReport.totalCarte.toLocaleString()} FCFA</p>
-                                    <hr class="border-black border-dashed my-2" />
-                                    <p class="text-sm font-bold">TOTAL MACHINE : {lastShiftReport.totalGeneral.toLocaleString()} FCFA</p>
-                                    <p>Espèces Comptés : {lastShiftReport.physicalCash.toLocaleString()} FCFA</p>
-                                    <p class="font-bold">Écart : {lastShiftReport.ecart.toLocaleString()} FCFA</p>
-                                </div>
-                                <div class="pt-4 flex gap-2">
-                                    <button onClick={() => window.print()} class="flex-1 bg-black text-white font-bold py-2 rounded text-xs">Imprimer Ticket</button>
-                                    <button onClick={() => setLastShiftReport(null)} class="flex-1 border border-black font-bold py-2 rounded text-xs">Fermer</button>
-                                </div>
-                            </div>
-                        </div>
                     )}
 
                     {/* MODALE LOGIN STAFF */}
@@ -973,7 +607,7 @@
                                         onChange={(e) => setPinInput(e.target.value)}
                                         placeholder="Code PIN"
                                         required 
-                                        class="w-full bg-brand-dark border border-brand-border text-center text-2xl tracking-widest rounded p-3 text-white focus:border-brand-gold outline-none"
+                                        class="w-full bg-brand-dark border border-brand-border text-center text-2xl tracking-widest rounded p-3 text-white outline-none"
                                     />
                                     <button type="submit" class="w-full bg-brand-gold text-black font-bold py-2 rounded">
                                         Demander l'accès
@@ -988,70 +622,34 @@
                         <div class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex justify-end">
                             <div class="bg-brand-card w-full max-w-md h-full p-6 flex flex-col justify-between border-l border-brand-border">
                                 <div>
-                                    <div class="flex justify-between items-center pb-4 mb-4 border-b border-brand-border">
-                                        <h3 class="text-xl font-bold text-white"><i class="fa-solid fa-basket-shopping text-brand-gold"></i> Votre Commande</h3>
-                                        <button onClick={() => setIsCartOpen(false)} class="text-stone-400 hover:text-white">&times;</button>
-                                    </div>
-                                    {cart.length === 0 ? <p class="text-stone-500 text-center py-10">Votre panier est vide.</p> : (
-                                        <div class="space-y-3">
-                                            {cart.map(item => (
-                                                <div key={item.id} class="flex justify-between items-center bg-brand-dark p-3 rounded">
-                                                    <div>
-                                                        <h4 class="font-bold text-sm text-white">{item.name}</h4>
-                                                        <p class="text-xs text-brand-gold">{item.price.toLocaleString()} FCFA</p>
-                                                    </div>
-                                                    <span class="text-xs bg-brand-card px-2 py-1 rounded">x{item.qty}</span>
-                                                </div>
-                                            ))}
+                                    <h3 class="text-xl font-bold text-white mb-4">Votre Commande</h3>
+                                    {cart.map(item => (
+                                        <div key={item.id} class="flex justify-between items-center bg-brand-dark p-3 rounded mb-2">
+                                            <span class="text-white font-bold">{item.name} (x{item.qty})</span>
+                                            <span class="text-brand-gold">{item.price * item.qty} FCFA</span>
                                         </div>
-                                    )}
+                                    ))}
                                 </div>
                                 {cart.length > 0 && (
-                                    <div class="border-t border-brand-border pt-4">
-                                        <div class="flex justify-between items-center mb-4">
-                                            <span>Total :</span>
-                                            <span class="text-2xl font-bold text-brand-gold">{cart.reduce((a,b) => a + (b.price * b.qty), 0).toLocaleString()} FCFA</span>
-                                        </div>
-                                        <button onClick={handleCheckout} class="w-full bg-brand-gold text-black font-bold py-3 rounded">
-                                            Valider la commande
-                                        </button>
-                                    </div>
+                                    <button onClick={handleCheckout} class="w-full bg-brand-gold text-black font-bold py-3 rounded">
+                                        Valider la commande
+                                    </button>
                                 )}
                             </div>
                         </div>
                     )}
 
-                    {/* FOOTER */}
-                    <footer class="mt-auto bg-black border-t border-brand-border py-8 px-6 text-stone-400 text-xs text-center">
-                        © 2026 TEMBERMA. Tous droits réservés. Avenue de la Nouvelle Marche, Lomé.
-                    </footer>
-
                 </div>
             );
         }
 
-        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+        // Attendre que Firebase soit chargé avant de monter l'application React
+        const checkFirebase = setInterval(() => {
+            if (window.db && window.fb) {
+                clearInterval(checkFirebase);
+                ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+            }
+        }, 100);
     </script>
-    // Import the functions you need from the SDKs you need
-import { initializeApp } from "firebase/app";
-import { getAnalytics } from "firebase/analytics";
-// TODO: Add SDKs for Firebase products that you want to use
-// https://firebase.google.com/docs/web/setup#available-libraries
-
-// Your web app's Firebase configuration
-// For Firebase JS SDK v7.20.0 and later, measurementId is optional
-const firebaseConfig = {
-  apiKey: "AIzaSyA-vf9OPzqDhaOYFYVDaSoOR-9H2QPUPow",
-  authDomain: "tembermaa-app.firebaseapp.com",
-  projectId: "tembermaa-app",
-  storageBucket: "tembermaa-app.firebasestorage.app",
-  messagingSenderId: "76903191144",
-  appId: "1:76903191144:web:9a615be1bbd8706947a1dd",
-  measurementId: "G-WWC22B0JXT"
-};
-
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
-const analytics = getAnalytics(app);
 </body>
 </html>
