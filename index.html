@@ -41,14 +41,13 @@
 
     <div id="root"></div>
 
-    <!-- Firebase SDK (Version Web Modular v9+) -->
+    <!-- Firebase SDK (v9 Modular) -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
         import { 
-            getFirestore, collection, onSnapshot, addDoc, doc, updateDoc, deleteDoc, serverTimestamp 
+            getFirestore, collection, onSnapshot, addDoc, doc, updateDoc, deleteDoc 
         } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-        // Configuration de votre projet Firebase
         const firebaseConfig = {
             apiKey: "AIzaSyA-vf9OPzqDhaOYFYVDaSoOR-9H2QPUPow",
             authDomain: "tembermaa-app.firebaseapp.com",
@@ -59,27 +58,52 @@
             measurementId: "G-WWC22B0JXT"
         };
 
-        // Initialisation de Firebase & Firestore
-        const app = initializeApp(firebaseConfig);
-        const db = getFirestore(app);
-
-        // Exposer les variables globales pour le script Babel
-        window.db = db;
-        window.fb = {
-            collection,
-            onSnapshot,
-            addDoc,
-            doc,
-            updateDoc,
-            deleteDoc,
-            serverTimestamp
-        };
+        try {
+            const app = initializeApp(firebaseConfig);
+            const db = getFirestore(app);
+            window.db = db;
+            window.fb = { collection, onSnapshot, addDoc, doc, updateDoc, deleteDoc };
+        } catch (e) {
+            console.error("Erreur Firebase:", e);
+        }
     </script>
 
     <script type="text/babel">
         const { useState, useEffect } = React;
 
-        // CODES D'ACCÈS
+        const DEFAULT_MENU = [
+            {
+                id: 1,
+                name: "Foutou Banane & Sauce Graine Royale",
+                category: "plats",
+                price: 8500,
+                prepTime: 25,
+                desc: "Servi avec viandes sélectionnées et poisson fumé de la côte togolause.",
+                badge: "Spécialité",
+                img: "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=800&q=80"
+            },
+            {
+                id: 2,
+                name: "Poulet Braisé aux Épices d'Atacora",
+                category: "grillades",
+                price: 7000,
+                prepTime: 20,
+                desc: "Mariné 24h aux herbes locales, servi avec alloco ou frites de yams.",
+                badge: "Populaire",
+                img: "https://images.unsplash.com/photo-1598515214211-89d3c73ae83b?auto=format&fit=crop&w=800&q=80"
+            },
+            {
+                id: 3,
+                name: "Tchinkounté de Poisson Frais",
+                category: "plats",
+                price: 9000,
+                prepTime: 30,
+                desc: "Soupe traditionnelle pimentée aux aromates de Kpalimé.",
+                badge: "Chef",
+                img: "https://images.unsplash.com/photo-1534422298391-e4f8c172dddb?auto=format&fit=crop&w=800&q=80"
+            }
+        ];
+
         const ROLES_INFO = {
             '0000': { role: 'admin', label: 'Administrateur Général', icon: 'fa-user-shield' },
             '1111': { role: 'cuisine', label: 'Chef Cuisine', icon: 'fa-utensils' },
@@ -89,87 +113,37 @@
         };
 
         function App() {
-            const [menuList, setMenuList] = useState([]);
+            const [menuList, setMenuList] = useState(DEFAULT_MENU);
             const [activeCategory, setActiveCategory] = useState('tous');
             const [cart, setCart] = useState([]);
             const [isCartOpen, setIsCartOpen] = useState(false);
-            const [isResaOpen, setIsResaOpen] = useState(false);
             const [isStaffLoginOpen, setIsStaffLoginOpen] = useState(false);
             
-            // Session et sécurité staff
             const [currentStaff, setCurrentStaff] = useState(null);
             const [pinInput, setPinInput] = useState('');
-            const [pendingLogins, setPendingLogins] = useState([]);
-
-            // Commandes, Réservations & Caisse
-            const [orders, setOrders] = useState([]);
-            const [paidSales, setPaidSales] = useState([]); 
-            const [reservations, setReservations] = useState([]);
-            const [myResaTicket, setMyResaTicket] = useState(null);
-            
-            // Modal de validation de réservation avec choix de table
-            const [selectedResaToConfirm, setSelectedResaToConfirm] = useState(null);
-            const [assignedTableInput, setAssignedTableInput] = useState('');
-
-            // Clôture de caisse
-            const [isCloseShiftOpen, setIsCloseShiftOpen] = useState(false);
-            const [cashCountInput, setCashCountInput] = useState('');
-            const [lastShiftReport, setLastShiftReport] = useState(null);
-
-            // Modale d'ajout de plat
-            const [isAddDishOpen, setIsAddDishOpen] = useState(false);
-            const [newDish, setNewDish] = useState({ name: '', category: 'plats', price: '', prepTime: '', desc: '', badge: 'Nouveau', img: '' });
-
-            // Formulaire de réservation avec sélection de menu
-            const [resaForm, setResaForm] = useState({ name: '', phone: '', date: '', time: '', guests: '2' });
-            const [selectedResaMenu, setSelectedResaMenu] = useState([]);
-
-            // Toast notifications
             const [toast, setToast] = useState('');
+
             const showToast = (msg) => {
                 setToast(msg);
                 setTimeout(() => setToast(''), 3500);
             };
 
-            // ========================================================
-            // SYNCHRONISATION FIRESTORE EN TEMPS RÉEL (5 ONGLETS / 4 PC)
-            // ========================================================
             useEffect(() => {
-                if (!window.db || !window.fb) return;
+                const interval = setInterval(() => {
+                    if (window.db && window.fb) {
+                        clearInterval(interval);
+                        const { collection, onSnapshot } = window.fb;
 
-                const { collection, onSnapshot } = window.fb;
+                        onSnapshot(collection(window.db, "menu"), (snapshot) => {
+                            if (!snapshot.empty) {
+                                const dishes = snapshot.docs.map(doc => ({ docId: doc.id, ...doc.data() }));
+                                setMenuList(dishes);
+                            }
+                        }, (err) => console.log("Erreur Firestore :", err));
+                    }
+                }, 200);
 
-                // 1. Écouter les changements sur le MENU
-                const unsubMenu = onSnapshot(collection(window.db, "menu"), (snapshot) => {
-                    const dishes = snapshot.docs.map(doc => ({ docId: doc.id, ...doc.data() }));
-                    setMenuList(dishes);
-                });
-
-                // 2. Écouter les COMMANDES
-                const unsubOrders = onSnapshot(collection(window.db, "commandes"), (snapshot) => {
-                    const cmds = snapshot.docs.map(doc => ({ docId: doc.id, ...doc.data() }));
-                    setOrders(cmds.filter(o => o.status !== 'Encaissé'));
-                    setPaidSales(cmds.filter(o => o.status === 'Encaissé'));
-                });
-
-                // 3. Écouter les RÉSERVATIONS
-                const unsubResa = onSnapshot(collection(window.db, "reservations"), (snapshot) => {
-                    const resas = snapshot.docs.map(doc => ({ docId: doc.id, ...doc.data() }));
-                    setReservations(resas);
-                });
-
-                // 4. Écouter les DEMANDES DE CONNEXION STAFF
-                const unsubStaff = onSnapshot(collection(window.db, "staff_logins"), (snapshot) => {
-                    const reqs = snapshot.docs.map(doc => ({ docId: doc.id, ...doc.data() }));
-                    setPendingLogins(reqs);
-                });
-
-                return () => {
-                    unsubMenu();
-                    unsubOrders();
-                    unsubResa();
-                    unsubStaff();
-                };
+                return () => clearInterval(interval);
             }, []);
 
             const addToCart = (item) => {
@@ -183,129 +157,29 @@
                 showToast(`"${item.name}" ajouté à la commande`);
             };
 
-            const toggleResaMenuItem = (item) => {
-                setSelectedResaMenu(prev => {
-                    const exists = prev.find(i => i.id === item.id);
-                    if (exists) {
-                        return prev.filter(i => i.id !== item.id);
-                    } else {
-                        return [...prev, { id: item.id, name: item.name, price: item.price }];
-                    }
-                });
-            };
-
-            // Valider la commande client instantanée (ENVOI DANS FIRESTORE)
             const handleCheckout = async () => {
                 if (cart.length === 0) return;
-                const maxPrepTime = Math.max(...cart.map(item => item.prepTime));
                 const total = cart.reduce((acc, item) => acc + (item.price * item.qty), 0);
                 
                 const newOrder = {
                     id: 'CMD-' + Math.floor(1000 + Math.random() * 9000),
                     items: cart,
                     total: total,
-                    prepTime: maxPrepTime,
                     status: 'En cuisine',
                     paymentStatus: 'Non payé',
                     createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
                     table: 'Table ' + Math.floor(1 + Math.random() * 12)
                 };
 
-                await window.fb.addDoc(window.fb.collection(window.db, "commandes"), newOrder);
+                if (window.db && window.fb) {
+                    await window.fb.addDoc(window.fb.collection(window.db, "commandes"), newOrder);
+                }
 
                 setCart([]);
                 setIsCartOpen(false);
-                showToast(`Commande ${newOrder.id} transmise en cuisine sur tous les postes !`);
+                showToast(`Commande ${newOrder.id} transmise !`);
             };
 
-            // Encaissement Caisse (MAJ FIRESTORE)
-            const handleEncaisser = async (orderId, modePaiement) => {
-                const targetOrder = orders.find(o => o.id === orderId);
-                if (!targetOrder) return;
-
-                const orderRef = window.fb.doc(window.db, "commandes", targetOrder.docId);
-                await window.fb.updateDoc(orderRef, {
-                    paidAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                    paymentMethod: modePaiement,
-                    paymentStatus: 'Payé',
-                    status: 'Encaissé'
-                });
-
-                showToast(`Commande ${orderId} encaissée (${modePaiement}) !`);
-            };
-
-            // Clôture de session Caisse
-            const handleClotureCaisse = (e) => {
-                e.preventDefault();
-                const totalEspeces = paidSales.filter(s => s.paymentMethod === 'Espèces').reduce((a,b) => a + b.total, 0);
-                const totalMobile = paidSales.filter(s => s.paymentMethod === 'Mobile Money').reduce((a,b) => a + b.total, 0);
-                const totalCarte = paidSales.filter(s => s.paymentMethod === 'Carte').reduce((a,b) => a + b.total, 0);
-                const totalGeneral = paidSales.reduce((a,b) => a + b.total, 0);
-                
-                const physicalCash = Number(cashCountInput) || 0;
-                const ecart = physicalCash - totalEspeces;
-
-                const report = {
-                    id: 'CLOTURE-' + Date.now(),
-                    date: new Date().toLocaleDateString('fr-FR'),
-                    time: new Date().toLocaleTimeString('fr-FR'),
-                    totalSalesCount: paidSales.length,
-                    totalGeneral,
-                    totalEspeces,
-                    totalMobile,
-                    totalCarte,
-                    physicalCash,
-                    ecart,
-                    salesDetail: [...paidSales]
-                };
-
-                setLastShiftReport(report);
-                setIsCloseShiftOpen(false);
-                showToast('Caisse clôturée avec succès !');
-            };
-
-            // Soumettre une réservation (Client -> FIRESTORE)
-            const handleResaSubmit = async (e) => {
-                e.preventDefault();
-                const newResa = {
-                    id: 'TEMB-RES-' + Math.floor(1000 + Math.random() * 9000),
-                    ...resaForm,
-                    menuItems: selectedResaMenu,
-                    table: 'En attente d\'attribution',
-                    status: 'En attente'
-                };
-
-                await window.fb.addDoc(window.fb.collection(window.db, "reservations"), newResa);
-
-                setMyResaTicket(newResa);
-                setIsResaOpen(false);
-                setSelectedResaMenu([]);
-                showToast('Demande de réservation transmise en temps réel !');
-            };
-
-            // Valider réservation avec Numéro de Table (MAJ FIRESTORE)
-            const confirmReservationWithTable = async (e) => {
-                e.preventDefault();
-                if (!selectedResaToConfirm || !assignedTableInput) return;
-
-                const updatedTable = assignedTableInput.startsWith('Table') ? assignedTableInput : `Table ${assignedTableInput}`;
-                const resaRef = window.fb.doc(window.db, "reservations", selectedResaToConfirm.docId);
-
-                await window.fb.updateDoc(resaRef, {
-                    status: 'Confirmée',
-                    table: updatedTable
-                });
-
-                if (myResaTicket && myResaTicket.id === selectedResaToConfirm.id) {
-                    setMyResaTicket(prev => ({ ...prev, status: 'Confirmée', table: updatedTable }));
-                }
-
-                showToast(`Réservation ${selectedResaToConfirm.id} validée pour la ${updatedTable}`);
-                setSelectedResaToConfirm(null);
-                setAssignedTableInput('');
-            };
-
-            // Demande de connexion staff (ENVOI DANS FIRESTORE)
             const handleStaffLoginRequest = async (e) => {
                 e.preventDefault();
                 const roleInfo = ROLES_INFO[pinInput];
@@ -320,286 +194,89 @@
                     setPinInput('');
                     showToast('Bienvenue Administrateur');
                 } else {
-                    const newRequest = { 
-                        pin: pinInput, 
-                        ...roleInfo, 
-                        timestamp: new Date().toLocaleTimeString() 
-                    };
-
-                    await window.fb.addDoc(window.fb.collection(window.db, "staff_logins"), newRequest);
-
+                    if (window.db && window.fb) {
+                        await window.fb.addDoc(window.fb.collection(window.db, "staff_logins"), {
+                            pin: pinInput, ...roleInfo, timestamp: new Date().toLocaleTimeString()
+                        });
+                    }
                     setIsStaffLoginOpen(false);
                     setPinInput('');
-                    alert(`Demande de connexion transmise à l'Administrateur.`);
+                    alert(`Demande transmise à l'Administrateur.`);
                 }
-            };
-
-            // Approbation Admin pour connexion Staff (MAJ / SUPPRESSION FIRESTORE)
-            const approveStaffLogin = async (req) => {
-                const reqRef = window.fb.doc(window.db, "staff_logins", req.docId);
-                await window.fb.deleteDoc(reqRef);
-                showToast(`Connexion de ${req.label} confirmée !`);
-            };
-
-            const rejectStaffLogin = async (reqDocId) => {
-                const reqRef = window.fb.doc(window.db, "staff_logins", reqDocId);
-                await window.fb.deleteDoc(reqRef);
-                showToast(`Demande de connexion refusée.`);
-            };
-
-            // Ajouter plat au menu (Admin -> FIRESTORE)
-            const handleAddDishSubmit = async (e) => {
-                e.preventDefault();
-                const dishToAdd = {
-                    ...newDish,
-                    id: Date.now(),
-                    price: Number(newDish.price),
-                    prepTime: Number(newDish.prepTime),
-                    ordersCount: 0,
-                    img: newDish.img || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=800&q=80'
-                };
-
-                await window.fb.addDoc(window.fb.collection(window.db, "menu"), dishToAdd);
-
-                setIsAddDishOpen(false);
-                setNewDish({ name: '', category: 'plats', price: '', prepTime: '', desc: '', badge: 'Nouveau', img: '' });
-                showToast('Nouveau plat ajouté au menu sur tous les postes !');
             };
 
             const filteredMenu = activeCategory === 'tous' 
                 ? menuList 
                 : menuList.filter(item => item.category === activeCategory);
 
-            const pendingReservationsCount = reservations.filter(r => r.status === 'En attente').length;
-
             return (
-                <div class="min-h-screen flex flex-col relative">
-                    
-                    {/* NOTIFICATION FLASH */}
+                <div className="min-h-screen flex flex-col relative">
                     {toast && (
-                        <div class="fixed bottom-5 right-5 z-50 bg-brand-gold text-black px-4 py-3 rounded-lg shadow-xl font-bold flex items-center gap-2 animate-bounce">
-                            <i class="fa-solid fa-circle-check"></i>
-                            {toast}
+                        <div className="fixed bottom-5 right-5 z-50 bg-brand-gold text-black px-4 py-3 rounded-lg shadow-xl font-bold flex items-center gap-2">
+                            <i className="fa-solid fa-circle-check"></i>{toast}
                         </div>
                     )}
 
-                    {/* NAVBAR */}
-                    <header class="sticky top-0 z-40 bg-brand-dark/95 backdrop-blur-md border-b border-brand-border px-6 py-4 flex items-center justify-between">
-                        <div class="flex items-center gap-2 text-brand-gold font-bold text-2xl tracking-widest cursor-pointer" onClick={() => setCurrentStaff(null)}>
-                            <i class="fa-solid fa-utensils"></i>
+                    <header className="sticky top-0 z-40 bg-brand-dark/95 backdrop-blur-md border-b border-brand-border px-6 py-4 flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-brand-gold font-bold text-2xl tracking-widest cursor-pointer" onClick={() => setCurrentStaff(null)}>
+                            <i className="fa-solid fa-utensils"></i>
                             <span>TEMBERMA</span>
                         </div>
 
-                        <nav class="hidden md:flex items-center gap-8 text-sm font-semibold text-stone-300">
-                            <a href="#accueil" class="hover:text-brand-gold transition">ACCUEIL</a>
-                            <a href="#menu" class="hover:text-brand-gold transition">MENU</a>
-                        </nav>
-
-                        <div class="flex items-center gap-3">
+                        <div className="flex items-center gap-3">
                             <button 
                                 onClick={() => currentStaff ? setCurrentStaff(null) : setIsStaffLoginOpen(true)}
-                                class={`relative px-3 py-1.5 rounded text-xs font-bold flex items-center gap-2 border transition ${currentStaff ? 'bg-brand-orange text-white border-brand-orange' : 'border-brand-gold/50 text-brand-gold hover:bg-brand-gold/10'}`}
+                                className={`px-3 py-1.5 rounded text-xs font-bold border transition ${currentStaff ? 'bg-brand-orange text-white border-brand-orange' : 'border-brand-gold/50 text-brand-gold'}`}
                             >
-                                <i class={`fa-solid ${currentStaff ? 'fa-user-check' : 'fa-lock'}`}></i>
+                                <i className={`fa-solid ${currentStaff ? 'fa-user-check' : 'fa-lock'} mr-1`}></i>
                                 <span>{currentStaff ? currentStaff.label : 'Espace Staff'}</span>
-                                {pendingLogins.length > 0 && !currentStaff && (
-                                    <span class="absolute -top-1 -right-1 bg-red-600 text-white text-[10px] w-4 h-4 rounded-full flex items-center justify-center font-bold animate-pulse">
-                                        {pendingLogins.length}
-                                    </span>
-                                )}
                             </button>
 
-                            <button onClick={() => setIsCartOpen(true)} class="relative p-2 text-brand-gold hover:text-white transition">
-                                <i class="fa-solid fa-basket-shopping text-xl"></i>
+                            <button onClick={() => setIsCartOpen(true)} className="relative p-2 text-brand-gold">
+                                <i className="fa-solid fa-basket-shopping text-xl"></i>
                                 {cart.length > 0 && (
-                                    <span class="absolute -top-1 -right-1 bg-brand-orange text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-bold">
+                                    <span className="absolute -top-1 -right-1 bg-brand-orange text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-bold">
                                         {cart.reduce((a,b) => a + b.qty, 0)}
                                     </span>
                                 )}
                             </button>
-
-                            <button onClick={() => setIsResaOpen(true)} class="bg-brand-gold hover:bg-brand-gold-hover text-black font-bold px-4 py-2 rounded transition text-sm hidden sm:block">
-                                RÉSERVER
-                            </button>
                         </div>
                     </header>
 
-                    {/* ESPACE STAFF OU CLIENT */}
-                    {currentStaff ? (
-                        <div class="p-6 max-w-7xl mx-auto w-full flex-1">
-                            <div class="bg-brand-card border border-brand-border rounded-lg p-6 mb-8 flex justify-between items-center">
-                                <div>
-                                    <span class="text-xs text-brand-gold uppercase tracking-widest font-bold">Session Active</span>
-                                    <h2 class="text-2xl font-bold text-white flex items-center gap-2">
-                                        <i class={`fa-solid ${currentStaff.icon} text-brand-gold`}></i>
-                                        Espace {currentStaff.label}
-                                    </h2>
-                                </div>
-                                <button onClick={() => setCurrentStaff(null)} class="bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs font-bold px-4 py-2 rounded">
-                                    Déconnexion
-                                </button>
+                    <main className="flex-1">
+                        <section className="relative h-[50vh] flex items-center justify-center text-center px-4 bg-cover bg-center" style={{ backgroundImage: `linear-gradient(rgba(18, 10, 7, 0.75), rgba(18, 10, 7, 0.85)), url('https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=1350&q=80')` }}>
+                            <div className="max-w-3xl">
+                                <span className="text-brand-gold text-xs font-bold tracking-[0.3em] uppercase block mb-3">CUISINE AFRICAINE RAFFINÉE</span>
+                                <h1 className="text-3xl md:text-5xl font-serif font-bold text-white mb-6">L'Âme de l'Atacora dans votre assiette</h1>
                             </div>
+                        </section>
 
-                            {/* VUE ADMIN (0000) */}
-                            {currentStaff.role === 'admin' && (
-                                <div class="space-y-10">
-                                    {pendingLogins.length > 0 ? (
-                                        <div class="bg-red-950/40 border-2 border-red-600 p-6 rounded-lg animate-pulse">
-                                            <h3 class="text-lg font-bold text-red-500 mb-3 flex items-center gap-2">
-                                                <i class="fa-solid fa-bell"></i> Notification d'accès Staff : {pendingLogins.length} demande(s) en attente
-                                            </h3>
-                                            <div class="space-y-3">
-                                                {pendingLogins.map(req => (
-                                                    <div key={req.docId} class="bg-brand-dark p-4 rounded flex justify-between items-center border border-red-900/50">
-                                                        <div>
-                                                            <span class="text-white font-bold text-base">{req.label}</span>
-                                                            <p class="text-xs text-stone-400">Demande effectuée à {req.timestamp}</p>
-                                                        </div>
-                                                        <div class="flex gap-2">
-                                                            <button onClick={() => approveStaffLogin(req)} class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2 rounded flex items-center gap-1">
-                                                                <i class="fa-solid fa-check"></i> Autoriser la connexion
-                                                            </button>
-                                                            <button onClick={() => rejectStaffLogin(req.docId)} class="bg-stone-800 hover:bg-stone-700 text-stone-300 font-bold text-xs px-3 py-2 rounded">
-                                                                Refuser
-                                                            </button>
-                                                        </div>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    ) : (
-                                        <div class="bg-brand-card p-4 rounded border border-brand-border text-xs text-stone-400">
-                                            <i class="fa-solid fa-shield-halved text-brand-gold mr-2"></i> Aucune demande de connexion staff en attente.
-                                        </div>
-                                    )}
-
-                                    <div class="bg-brand-card p-6 rounded-lg border border-brand-border">
-                                        <h3 class="text-lg font-bold text-brand-gold mb-4 flex items-center gap-2">
-                                            <i class="fa-solid fa-bell"></i> Notifications & Gestion des Réservations ({pendingReservationsCount})
-                                        </h3>
-                                        {reservations.length === 0 ? (
-                                            <p class="text-stone-500 text-xs">Aucune réservation reçue.</p>
-                                        ) : (
-                                            <div class="space-y-3">
-                                                {reservations.map(res => (
-                                                    <div key={res.docId} class="bg-brand-dark border border-brand-border p-4 rounded-lg flex flex-col md:flex-row justify-between md:items-center gap-4">
-                                                        <div>
-                                                            <div class="flex items-center gap-2">
-                                                                <span class="text-xs font-bold text-brand-gold">{res.id}</span>
-                                                                <span class={`text-[10px] px-2 py-0.5 rounded font-bold ${res.status === 'Confirmée' ? 'bg-emerald-900 text-emerald-400' : 'bg-brand-orange/20 text-brand-orange'}`}>{res.status}</span>
-                                                            </div>
-                                                            <h4 class="font-bold text-white text-sm mt-1">{res.name} ({res.guests} personnes)</h4>
-                                                            <p class="text-xs text-stone-400">{res.date} à {res.time} · Tél: {res.phone}</p>
-                                                            <p class="text-xs text-brand-gold mt-1 font-semibold">Table : {res.table}</p>
-                                                        </div>
-                                                        {res.status === 'En attente' && (
-                                                            <button onClick={() => setSelectedResaToConfirm(res)} class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2 rounded">
-                                                                Valider & Attribuer Table
-                                                            </button>
-                                                        )}
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* VUE CAISSE (4444) */}
-                            {currentStaff.role === 'caisse' && (
-                                <div class="space-y-8">
-                                    <div class="flex justify-between items-center bg-brand-card p-6 rounded-lg border border-brand-border">
-                                        <div>
-                                            <h3 class="text-xl font-bold text-brand-gold"><i class="fa-solid fa-cash-register mr-2"></i>Gestion de la Caisse</h3>
-                                            <p class="text-xs text-stone-400">Encaissements en direct depuis les 5 postes</p>
-                                        </div>
-                                    </div>
-
-                                    <div class="grid md:grid-cols-2 gap-4">
-                                        {orders.map(ord => (
-                                            <div key={ord.docId} class="bg-brand-card border border-brand-border p-4 rounded-lg flex justify-between items-center">
-                                                <div>
-                                                    <div class="flex items-center gap-2">
-                                                        <span class="font-bold text-white">{ord.id}</span>
-                                                        <span class="text-xs bg-stone-800 text-brand-gold px-2 py-0.5 rounded">{ord.table}</span>
-                                                    </div>
-                                                    <p class="text-xs text-stone-400 mt-1">{ord.items.map(i => `${i.qty}x ${i.name}`).join(', ')}</p>
-                                                    <div class="text-brand-gold font-bold text-lg mt-2">{ord.total.toLocaleString()} FCFA</div>
-                                                </div>
-                                                <div class="flex flex-col gap-1">
-                                                    <button onClick={() => handleEncaisser(ord.id, 'Espèces')} class="bg-emerald-600 text-white text-xs font-bold px-3 py-1.5 rounded">Espèces</button>
-                                                    <button onClick={() => handleEncaisser(ord.id, 'Mobile Money')} class="bg-sky-600 text-white text-xs font-bold px-3 py-1.5 rounded">Mobile Money</button>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* VUE CUISINE (1111) */}
-                            {currentStaff.role === 'cuisine' && (
-                                <div>
-                                    <h3 class="text-xl font-bold text-brand-gold mb-4"><i class="fa-solid fa-fire-burner"></i> En Cuisine</h3>
-                                    <div class="grid md:grid-cols-2 gap-6">
-                                        {orders.filter(o => o.status === 'En cuisine').map(ord => (
-                                            <div key={ord.docId} class="bg-brand-card border-2 border-brand-orange p-5 rounded-lg">
-                                                <div class="flex justify-between mb-3 font-bold text-white">
-                                                    <span>{ord.id} ({ord.table})</span>
-                                                    <span class="text-xs text-brand-orange">{ord.createdAt}</span>
-                                                </div>
-                                                <ul class="text-sm space-y-1 mb-4">
-                                                    {ord.items.map((it, idx) => <li key={idx}>• <strong>{it.qty}x</strong> {it.name}</li>)}
-                                                </ul>
-                                                <button onClick={async () => {
-                                                    const ref = window.fb.doc(window.db, "commandes", ord.docId);
-                                                    await window.fb.updateDoc(ref, { status: 'Prêt à servir' });
-                                                }} class="w-full bg-emerald-600 text-white font-bold py-2 rounded text-sm">
-                                                    Marquer comme Prêt
-                                                </button>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    ) : (
-                        /* SECTION CLIENT */
-                        <>
-                            <section id="accueil" class="relative h-[85vh] flex items-center justify-center text-center px-4 bg-cover bg-center" style={{ backgroundImage: `linear-gradient(rgba(18, 10, 7, 0.75), rgba(18, 10, 7, 0.85)), url('https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=1350&q=80')` }}>
-                                <div class="max-w-3xl">
-                                    <span class="text-brand-gold text-xs md:text-sm font-bold tracking-[0.3em] uppercase block mb-3">CUISINE AFRICAINE RAFFINÉE</span>
-                                    <h1 class="text-4xl md:text-6xl font-serif font-bold text-white mb-6 leading-tight">L'Âme de l'Atacora dans votre assiette</h1>
-                                    <div class="flex flex-col sm:flex-row gap-4 justify-center">
-                                        <a href="#menu" class="bg-brand-gold text-black font-bold px-6 py-3 rounded">VOIR LE MENU</a>
-                                        <button onClick={() => setIsResaOpen(true)} class="border border-brand-gold text-brand-gold font-bold px-6 py-3 rounded">RÉSERVER UNE TABLE</button>
-                                    </div>
-                                </div>
-                            </section>
-
-                            <section id="menu" class="py-20 px-6 max-w-7xl mx-auto w-full">
-                                <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
-                                    {filteredMenu.map(item => (
-                                        <div key={item.docId || item.id} class="bg-brand-card border border-brand-border rounded-lg overflow-hidden flex flex-col p-4">
-                                            <img src={item.img} class="w-full h-48 object-cover rounded mb-4" />
-                                            <h3 class="font-bold text-lg text-white">{item.name}</h3>
-                                            <p class="text-brand-gold font-bold mb-2">{item.price.toLocaleString()} FCFA</p>
-                                            <button onClick={() => addToCart(item)} class="w-full bg-brand-gold/10 text-brand-gold border border-brand-gold/30 font-bold py-2 rounded">
-                                                Commander ce plat
+                        <section className="py-12 px-6 max-w-7xl mx-auto w-full">
+                            <h2 className="text-2xl font-bold text-brand-gold mb-6 text-center">Notre Menu</h2>
+                            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+                                {filteredMenu.map(item => (
+                                    <div key={item.docId || item.id} className="bg-brand-card border border-brand-border rounded-lg overflow-hidden flex flex-col p-4">
+                                        <img src={item.img} className="w-full h-48 object-cover rounded mb-4" alt={item.name} />
+                                        <h3 className="font-bold text-lg text-white">{item.name}</h3>
+                                        <p className="text-stone-400 text-xs mb-3 flex-1">{item.desc}</p>
+                                        <div className="flex justify-between items-center mt-auto">
+                                            <span className="text-brand-gold font-bold">{item.price.toLocaleString()} FCFA</span>
+                                            <button onClick={() => addToCart(item)} className="bg-brand-gold text-black font-bold px-3 py-1.5 rounded text-xs">
+                                                Commander
                                             </button>
                                         </div>
-                                    ))}
-                                </div>
-                            </section>
-                        </>
-                    )}
+                                    </div>
+                                ))}
+                            </div>
+                        </section>
+                    </main>
 
-                    {/* MODALE LOGIN STAFF */}
                     {isStaffLoginOpen && (
-                        <div class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-                            <div class="bg-brand-card border border-brand-border rounded-lg p-6 max-w-sm w-full relative">
-                                <button onClick={() => setIsStaffLoginOpen(false)} class="absolute top-4 right-4 text-stone-400 hover:text-white">&times;</button>
-                                <h3 class="text-xl font-bold text-brand-gold mb-4 text-center">Accès Staff TEMBERMA</h3>
-                                <form onSubmit={handleStaffLoginRequest} class="space-y-4">
+                        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+                            <div className="bg-brand-card border border-brand-border rounded-lg p-6 max-w-sm w-full relative">
+                                <button onClick={() => setIsStaffLoginOpen(false)} className="absolute top-4 right-4 text-stone-400">&times;</button>
+                                <h3 className="text-xl font-bold text-brand-gold mb-4 text-center">Accès Staff</h3>
+                                <form onSubmit={handleStaffLoginRequest} className="space-y-4">
                                     <input 
                                         type="password" 
                                         maxLength="4" 
@@ -607,49 +284,45 @@
                                         onChange={(e) => setPinInput(e.target.value)}
                                         placeholder="Code PIN"
                                         required 
-                                        class="w-full bg-brand-dark border border-brand-border text-center text-2xl tracking-widest rounded p-3 text-white outline-none"
+                                        className="w-full bg-brand-dark border border-brand-border text-center text-2xl rounded p-3 text-white outline-none"
                                     />
-                                    <button type="submit" class="w-full bg-brand-gold text-black font-bold py-2 rounded">
-                                        Demander l'accès
+                                    <button type="submit" className="w-full bg-brand-gold text-black font-bold py-2 rounded">
+                                        Se connecter
                                     </button>
                                 </form>
                             </div>
                         </div>
                     )}
 
-                    {/* PANIER CLIENT */}
                     {isCartOpen && (
-                        <div class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex justify-end">
-                            <div class="bg-brand-card w-full max-w-md h-full p-6 flex flex-col justify-between border-l border-brand-border">
+                        <div className="fixed inset-0 z-50 bg-black/80 flex justify-end">
+                            <div className="bg-brand-card w-full max-w-md h-full p-6 flex flex-col justify-between border-l border-brand-border">
                                 <div>
-                                    <h3 class="text-xl font-bold text-white mb-4">Votre Commande</h3>
+                                    <div className="flex justify-between items-center mb-6">
+                                        <h3 className="text-xl font-bold text-white">Votre Commande</h3>
+                                        <button onClick={() => setIsCartOpen(false)} className="text-stone-400 text-2xl">&times;</button>
+                                    </div>
                                     {cart.map(item => (
-                                        <div key={item.id} class="flex justify-between items-center bg-brand-dark p-3 rounded mb-2">
-                                            <span class="text-white font-bold">{item.name} (x{item.qty})</span>
-                                            <span class="text-brand-gold">{item.price * item.qty} FCFA</span>
+                                        <div key={item.id} className="flex justify-between items-center bg-brand-dark p-3 rounded mb-2">
+                                            <span className="text-white font-bold">{item.name} (x{item.qty})</span>
+                                            <span className="text-brand-gold">{(item.price * item.qty).toLocaleString()} FCFA</span>
                                         </div>
                                     ))}
                                 </div>
                                 {cart.length > 0 && (
-                                    <button onClick={handleCheckout} class="w-full bg-brand-gold text-black font-bold py-3 rounded">
+                                    <button onClick={handleCheckout} className="w-full bg-brand-gold text-black font-bold py-3 rounded">
                                         Valider la commande
                                     </button>
                                 )}
                             </div>
                         </div>
                     )}
-
                 </div>
             );
         }
 
-        // Attendre que Firebase soit chargé avant de monter l'application React
-        const checkFirebase = setInterval(() => {
-            if (window.db && window.fb) {
-                clearInterval(checkFirebase);
-                ReactDOM.createRoot(document.getElementById('root')).render(<App />);
-            }
-        }, 100);
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
     </script>
 </body>
 </html>
