@@ -112,13 +112,19 @@
             // Session et sécurité staff
             const [currentStaff, setCurrentStaff] = useState(null);
             const [pinInput, setPinInput] = useState('');
-            const [pendingLogins, setPendingLogins] = useState([]); // File d'attente validation Admin
+            const [pendingLogins, setPendingLogins] = useState([]);
 
-            // Commandes & Réservations
+            // Commandes, Réservations & Caisse
             const [orders, setOrders] = useState([]);
+            const [paidSales, setPaidSales] = useState([]); // Historique des encaissements caisse
             const [reservations, setReservations] = useState([]);
-            const [myResaTicket, setMyResaTicket] = useState(null); // Ticket de réservation du client
+            const [myResaTicket, setMyResaTicket] = useState(null);
             
+            // Clôture de caisse
+            const [isCloseShiftOpen, setIsCloseShiftOpen] = useState(false);
+            const [cashCountInput, setCashCountInput] = useState('');
+            const [lastShiftReport, setLastShiftReport] = useState(null);
+
             // Modale d'ajout de plat
             const [isAddDishOpen, setIsAddDishOpen] = useState(false);
             const [newDish, setNewDish] = useState({ name: '', category: 'plats', price: '', prepTime: '', desc: '', badge: 'Nouveau', img: '' });
@@ -145,7 +151,7 @@
                 showToast(`"${item.name}" ajouté à la commande`);
             };
 
-            // Valider la commande
+            // Valider la commande client
             const handleCheckout = () => {
                 if (cart.length === 0) return;
                 const maxPrepTime = Math.max(...cart.map(item => item.prepTime));
@@ -157,11 +163,11 @@
                     total: total,
                     prepTime: maxPrepTime,
                     status: 'En cuisine',
+                    paymentStatus: 'Non payé',
                     createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
                     table: 'Table ' + Math.floor(1 + Math.random() * 12)
                 };
 
-                // Incrémenter les stats des plats
                 setMenuList(prev => prev.map(m => {
                     const cartItem = cart.find(c => c.id === m.id);
                     return cartItem ? { ...m, ordersCount: (m.ordersCount || 0) + cartItem.qty } : m;
@@ -170,10 +176,57 @@
                 setOrders(prev => [newOrder, ...prev]);
                 setCart([]);
                 setIsCartOpen(false);
-                showToast(`Commande ${newOrder.id} transmise en cuisine (${maxPrepTime} min)`);
+                showToast(`Commande ${newOrder.id} transmise en cuisine`);
             };
 
-            // Soumettre une demande de réservation
+            // Encaissement par la caissière
+            const handleEncaisser = (orderId, modePaiement) => {
+                const targetOrder = orders.find(o => o.id === orderId);
+                if (!targetOrder) return;
+
+                const saleRecord = {
+                    ...targetOrder,
+                    paidAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                    paymentMethod: modePaiement,
+                    paymentStatus: 'Payé'
+                };
+
+                setPaidSales(prev => [saleRecord, ...prev]);
+                setOrders(prev => prev.filter(o => o.id !== orderId));
+                showToast(`Commande ${orderId} encaissée (${modePaiement}) !`);
+            };
+
+            // Clôture de session Caisse
+            const handleClotureCaisse = (e) => {
+                e.preventDefault();
+                const totalEspeces = paidSales.filter(s => s.paymentMethod === 'Espèces').reduce((a,b) => a + b.total, 0);
+                const totalMobile = paidSales.filter(s => s.paymentMethod === 'Mobile Money').reduce((a,b) => a + b.total, 0);
+                const totalCarte = paidSales.filter(s => s.paymentMethod === 'Carte').reduce((a,b) => a + b.total, 0);
+                const totalGeneral = paidSales.reduce((a,b) => a + b.total, 0);
+                
+                const physicalCash = Number(cashCountInput) || 0;
+                const ecart = physicalCash - totalEspeces;
+
+                const report = {
+                    id: 'CLOTURE-' + Date.now(),
+                    date: new Date().toLocaleDateString('fr-FR'),
+                    time: new Date().toLocaleTimeString('fr-FR'),
+                    totalSalesCount: paidSales.length,
+                    totalGeneral,
+                    totalEspeces,
+                    totalMobile,
+                    totalCarte,
+                    physicalCash,
+                    ecart,
+                    salesDetail: [...paidSales]
+                };
+
+                setLastShiftReport(report);
+                setIsCloseShiftOpen(false);
+                showToast('Caisse clôturée avec succès !');
+            };
+
+            // Soumettre une réservation
             const handleResaSubmit = (e) => {
                 e.preventDefault();
                 const newResa = {
@@ -186,13 +239,13 @@
                 setIsResaOpen(false);
             };
 
-            // Valider une réservation par la Réception / Admin
+            // Valider réservation Réception/Admin
             const confirmReservation = (resaId) => {
                 setReservations(prev => prev.map(r => r.id === resaId ? { ...r, status: 'Confirmée' } : r));
                 if (myResaTicket && myResaTicket.id === resaId) {
                     setMyResaTicket(prev => ({ ...prev, status: 'Confirmée' }));
                 }
-                showToast(`Réservation ${resaId} validée avec succès`);
+                showToast(`Réservation ${resaId} validée`);
             };
 
             // Demande de connexion staff
@@ -205,13 +258,11 @@
                 }
 
                 if (roleInfo.role === 'admin') {
-                    // L'admin se connecte directement
                     setCurrentStaff(roleInfo);
                     setIsStaffLoginOpen(false);
                     setPinInput('');
                     showToast('Bienvenue Administrateur');
                 } else {
-                    // Les autres rôles doivent être validés par l'admin
                     const requestId = Date.now();
                     const newRequest = { id: requestId, pin: pinInput, ...roleInfo, timestamp: new Date().toLocaleTimeString() };
                     setPendingLogins(prev => [...prev, newRequest]);
@@ -221,26 +272,24 @@
                 }
             };
 
-            // Validation de la connexion par l'admin
+            // Approbation Admin
             const approveStaffLogin = (req) => {
                 setPendingLogins(prev => prev.filter(p => p.id !== req.id));
                 setCurrentStaff({ role: req.role, label: req.label, icon: req.icon });
                 showToast(`Connexion de ${req.label} approuvée !`);
             };
 
-            // Upload image plat
+            // Upload image
             const handleImageUpload = (e) => {
                 const file = e.target.files[0];
                 if (file) {
                     const reader = new FileReader();
-                    reader.onloadend = () => {
-                        setNewDish(prev => ({ ...prev, img: reader.result }));
-                    };
+                    reader.onloadend = () => setNewDish(prev => ({ ...prev, img: reader.result }));
                     reader.readAsDataURL(file);
                 }
             };
 
-            // Ajouter un nouveau plat au menu
+            // Ajouter plat
             const handleAddDishSubmit = (e) => {
                 e.preventDefault();
                 const dishToAdd = {
@@ -275,18 +324,16 @@
                     {/* NAVBAR */}
                     <header class="sticky top-0 z-40 bg-brand-dark/95 backdrop-blur-md border-b border-brand-border px-6 py-4 flex items-center justify-between">
                         <div class="flex items-center gap-2 text-brand-gold font-bold text-2xl tracking-widest cursor-pointer" onClick={() => setCurrentStaff(null)}>
-                            <i class="fa-solid fa-[#D4AF37] fa-utensils"></i>
+                            <i class="fa-solid fa-utensils"></i>
                             <span>TEMBERMA</span>
                         </div>
 
                         <nav class="hidden md:flex items-center gap-8 text-sm font-semibold text-stone-300">
                             <a href="#accueil" class="hover:text-brand-gold transition">ACCUEIL</a>
                             <a href="#menu" class="hover:text-brand-gold transition">MENU</a>
-                            <a href="#histoire" class="hover:text-brand-gold transition">HISTOIRE</a>
                         </nav>
 
                         <div class="flex items-center gap-3">
-                            {/* Bouton Espace Personnel */}
                             <button 
                                 onClick={() => currentStaff ? setCurrentStaff(null) : setIsStaffLoginOpen(true)}
                                 class={`px-3 py-1.5 rounded text-xs font-bold flex items-center gap-2 border transition ${currentStaff ? 'bg-brand-orange text-white border-brand-orange' : 'border-brand-gold/50 text-brand-gold hover:bg-brand-gold/10'}`}
@@ -295,11 +342,7 @@
                                 <span>{currentStaff ? currentStaff.label : 'Espace Staff'}</span>
                             </button>
 
-                            {/* Panier */}
-                            <button 
-                                onClick={() => setIsCartOpen(true)}
-                                class="relative p-2 text-brand-gold hover:text-white transition"
-                            >
+                            <button onClick={() => setIsCartOpen(true)} class="relative p-2 text-brand-gold hover:text-white transition">
                                 <i class="fa-solid fa-basket-shopping text-xl"></i>
                                 {cart.length > 0 && (
                                     <span class="absolute -top-1 -right-1 bg-brand-orange text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-bold">
@@ -308,17 +351,14 @@
                                 )}
                             </button>
 
-                            <button 
-                                onClick={() => setIsResaOpen(true)}
-                                class="bg-brand-gold hover:bg-brand-gold-hover text-black font-bold px-4 py-2 rounded transition text-sm hidden sm:block"
-                            >
+                            <button onClick={() => setIsResaOpen(true)} class="bg-brand-gold hover:bg-brand-gold-hover text-black font-bold px-4 py-2 rounded transition text-sm hidden sm:block">
                                 RÉSERVER
                             </button>
                         </div>
                     </header>
 
                     {/* ======================================================== */}
-                    {/* TABLEAU DE BORD PERSONNEL / ESPACE DU STAFF             */}
+                    {/* ESPACE DU STAFF ET COMPTES                               */}
                     {/* ======================================================== */}
                     {currentStaff ? (
                         <div class="p-6 max-w-7xl mx-auto w-full flex-1">
@@ -335,10 +375,100 @@
                                 </button>
                             </div>
 
+                            {/* 💳 VUE CAISSE & FACTURATION (4444) */}
+                            {currentStaff.role === 'caisse' && (
+                                <div class="space-y-8">
+                                    {/* ENTÊTE CAISSE */}
+                                    <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-brand-card p-6 rounded-lg border border-brand-border">
+                                        <div>
+                                            <h3 class="text-xl font-bold text-brand-gold"><i class="fa-solid fa-cash-register mr-2"></i>Gestion de la Caisse en Direct</h3>
+                                            <p class="text-xs text-stone-400">Encaissez les clients et effectuez le bilan de fin de service</p>
+                                        </div>
+                                        <button onClick={() => setIsCloseShiftOpen(true)} class="bg-brand-orange hover:bg-orange-700 text-white font-bold px-5 py-2.5 rounded text-sm flex items-center gap-2">
+                                            <i class="fa-solid fa-calculator"></i> Clôturer la Caisse & Faire les Comptes
+                                        </button>
+                                    </div>
+
+                                    {/* COMMANDES À ENCAISSER */}
+                                    <div>
+                                        <h4 class="text-md font-bold text-white mb-3 flex items-center gap-2">
+                                            <i class="fa-solid fa-hourglass-half text-brand-gold"></i> Commandes en attente de paiement ({orders.length})
+                                        </h4>
+                                        {orders.length === 0 ? (
+                                            <p class="text-stone-500 text-sm bg-brand-card p-4 rounded border border-brand-border">Toutes les commandes en cours ont été réglées.</p>
+                                        ) : (
+                                            <div class="grid md:grid-cols-2 gap-4">
+                                                {orders.map(ord => (
+                                                    <div key={ord.id} class="bg-brand-card border border-brand-border p-4 rounded-lg flex justify-between items-center">
+                                                        <div>
+                                                            <div class="flex items-center gap-2">
+                                                                <span class="font-bold text-white">{ord.id}</span>
+                                                                <span class="text-xs bg-stone-800 text-brand-gold px-2 py-0.5 rounded">{ord.table}</span>
+                                                            </div>
+                                                            <p class="text-xs text-stone-400 mt-1">{ord.items.map(i => `${i.qty}x ${i.name}`).join(', ')}</p>
+                                                            <div class="text-brand-gold font-bold text-lg mt-2">{ord.total.toLocaleString()} FCFA</div>
+                                                        </div>
+                                                        <div class="flex flex-col gap-1.5">
+                                                            <button onClick={() => handleEncaisser(ord.id, 'Espèces')} class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded">
+                                                                💵 Espèces
+                                                            </button>
+                                                            <button onClick={() => handleEncaisser(ord.id, 'Mobile Money')} class="bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold px-3 py-1.5 rounded">
+                                                                📱 Mobile Money
+                                                            </button>
+                                                            <button onClick={() => handleEncaisser(ord.id, 'Carte')} class="bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold px-3 py-1.5 rounded">
+                                                                💳 Carte
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* HISTORIQUE DES ENCAISSEMENTS DE LA SESSION */}
+                                    <div>
+                                        <h4 class="text-md font-bold text-white mb-3 flex items-center gap-2">
+                                            <i class="fa-solid fa-receipt text-brand-gold"></i> Historique des Ventess de la Session ({paidSales.length})
+                                        </h4>
+                                        {paidSales.length === 0 ? (
+                                            <p class="text-stone-500 text-sm bg-brand-card p-4 rounded border border-brand-border">Aucun encaissement effectué pour le moment dans cette session.</p>
+                                        ) : (
+                                            <div class="bg-brand-card border border-brand-border rounded-lg overflow-x-auto">
+                                                <table class="w-full text-left text-xs">
+                                                    <thead class="bg-brand-dark text-brand-gold uppercase border-b border-brand-border">
+                                                        <tr>
+                                                            <th class="p-3">Heure</th>
+                                                            <th class="p-3">N° Commande</th>
+                                                            <th class="p-3">Table</th>
+                                                            <th class="p-3">Mode de Paiement</th>
+                                                            <th class="p-3 text-right">Montant Total</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody class="divide-y divide-brand-border text-stone-300">
+                                                        {paidSales.map(sale => (
+                                                            <tr key={sale.id} class="hover:bg-brand-dark/50">
+                                                                <td class="p-3 font-mono">{sale.paidAt}</td>
+                                                                <td class="p-3 font-bold text-white">{sale.id}</td>
+                                                                <td class="p-3">{sale.table}</td>
+                                                                <td class="p-3">
+                                                                    <span class="bg-brand-dark px-2 py-1 rounded border border-stone-700 font-bold text-brand-gold">
+                                                                        {sale.paymentMethod}
+                                                                    </span>
+                                                                </td>
+                                                                <td class="p-3 text-right font-bold text-white">{sale.total.toLocaleString()} FCFA</td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
                             {/* 👑 VUE ADMINISTRATEUR GÉNÉRAL (0000) */}
                             {currentStaff.role === 'admin' && (
                                 <div class="space-y-10">
-                                    {/* DEMANDES DE CONNEXION STAFF EN ATTENTE */}
                                     {pendingLogins.length > 0 && (
                                         <div class="bg-brand-orange/10 border-2 border-brand-orange p-6 rounded-lg">
                                             <h3 class="text-lg font-bold text-brand-orange mb-3 flex items-center gap-2">
@@ -360,7 +490,6 @@
                                         </div>
                                     )}
 
-                                    {/* BOUTON AJOUTER UN PLAT */}
                                     <div class="flex justify-between items-center">
                                         <h3 class="text-xl font-bold text-brand-gold"><i class="fa-solid fa-chart-line"></i> Vue d'Ensemble TEMBERMA</h3>
                                         <button onClick={() => setIsAddDishOpen(true)} class="bg-brand-gold text-black font-bold px-4 py-2 rounded text-sm hover:bg-brand-gold-hover">
@@ -368,7 +497,6 @@
                                         </button>
                                     </div>
 
-                                    {/* STATS & PLATS LES PLUS COMMANDÉS */}
                                     <div class="grid md:grid-cols-2 gap-6">
                                         <div class="bg-brand-card p-6 rounded-lg border border-brand-border">
                                             <h4 class="text-sm font-bold text-stone-400 mb-4 uppercase">🔥 Top Plats les plus commandés</h4>
@@ -387,11 +515,11 @@
 
                                         <div class="bg-brand-card p-6 rounded-lg border border-brand-border flex flex-col justify-between">
                                             <div>
-                                                <h4 class="text-sm font-bold text-stone-400 mb-4 uppercase">📊 Chiffre d'Affaires & Activité</h4>
+                                                <h4 class="text-sm font-bold text-stone-400 mb-4 uppercase">📊 Chiffre d'Affaires Encaissé en Caisse</h4>
                                                 <div class="text-3xl font-bold text-brand-gold mb-2">
-                                                    {orders.reduce((a,b) => a + b.total, 0).toLocaleString()} FCFA
+                                                    {paidSales.reduce((a,b) => a + b.total, 0).toLocaleString()} FCFA
                                                 </div>
-                                                <p class="text-xs text-stone-400">{orders.length} commandes enregistrées aujourd'hui</p>
+                                                <p class="text-xs text-stone-400">{paidSales.length} ventes réelles enregistrées et payées</p>
                                             </div>
                                             <div class="pt-6 border-t border-brand-border mt-6">
                                                 <p class="text-xs text-stone-400">Réservations validées : <strong>{reservations.filter(r => r.status === 'Confirmée').length}</strong> / Total : <strong>{reservations.length}</strong></p>
@@ -428,7 +556,7 @@
                                 </div>
                             )}
 
-                            {/* 🛎️ VUE RÉCEPTION (2222) - VALIDATION DES RÉSERVATIONS */}
+                            {/* 🛎️ VUE RÉCEPTION (2222) */}
                             {currentStaff.role === 'reception' && (
                                 <div>
                                     <h3 class="text-xl font-bold text-brand-gold mb-4"><i class="fa-solid fa-concierge-bell"></i> Gestion des Réservations Client</h3>
@@ -463,7 +591,6 @@
                         /* SECTION CLIENT CLASSIQUE                                 */
                         /* ======================================================== */
                         <>
-                            {/* HERO SECTION */}
                             <section id="accueil" class="relative h-[85vh] flex items-center justify-center text-center px-4 bg-cover bg-center" style={{ backgroundImage: `linear-gradient(rgba(18, 10, 7, 0.75), rgba(18, 10, 7, 0.85)), url('https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=1350&q=80')` }}>
                                 <div class="max-w-3xl">
                                     <span class="text-brand-gold text-xs md:text-sm font-bold tracking-[0.3em] uppercase block mb-3">CUISINE AFRICAINE RAFFINÉE</span>
@@ -476,7 +603,6 @@
                                 </div>
                             </section>
 
-                            {/* TICKET DE RÉSERVATION DU CLIENT SI EN COURS */}
                             {myResaTicket && (
                                 <div class="max-w-xl mx-auto my-8 px-6">
                                     <div class="bg-brand-card border-2 border-brand-gold rounded-lg p-6 text-center shadow-2xl">
@@ -502,18 +628,12 @@
                                 </div>
                             )}
 
-                            {/* MENU SECTION */}
                             <section id="menu" class="py-20 px-6 max-w-7xl mx-auto w-full">
                                 <div class="text-center mb-12">
                                     <h2 class="text-3xl md:text-4xl font-serif text-brand-gold font-bold mb-2">Une Symphonie de Saveurs</h2>
-                                    
                                     <div class="flex justify-center gap-3 mt-8 flex-wrap">
                                         {['tous', 'plats', 'boissons', 'desserts'].map(cat => (
-                                            <button 
-                                                key={cat}
-                                                onClick={() => setActiveCategory(cat)}
-                                                class={`px-5 py-2 rounded-full text-sm font-semibold capitalize transition ${activeCategory === cat ? 'bg-brand-gold text-black' : 'bg-brand-card text-stone-300 border border-brand-border hover:border-brand-gold'}`}
-                                            >
+                                            <button key={cat} onClick={() => setActiveCategory(cat)} class={`px-5 py-2 rounded-full text-sm font-semibold capitalize transition ${activeCategory === cat ? 'bg-brand-gold text-black' : 'bg-brand-card text-stone-300 border border-brand-border hover:border-brand-gold'}`}>
                                                 {cat}
                                             </button>
                                         ))}
@@ -539,10 +659,7 @@
                                                     <div class="text-xs text-stone-500 mb-4 flex items-center gap-1">
                                                         <i class="fa-regular fa-clock"></i> Temps : ~{item.prepTime} min
                                                     </div>
-                                                    <button 
-                                                        onClick={() => addToCart(item)}
-                                                        class="w-full bg-brand-gold/10 hover:bg-brand-gold text-brand-gold hover:text-black border border-brand-gold/30 font-bold py-2 rounded transition text-sm flex items-center justify-center gap-2"
-                                                    >
+                                                    <button onClick={() => addToCart(item)} class="w-full bg-brand-gold/10 hover:bg-brand-gold text-brand-gold hover:text-black border border-brand-gold/30 font-bold py-2 rounded transition text-sm flex items-center justify-center gap-2">
                                                         <i class="fa-solid fa-plus"></i> Commander ce plat
                                                     </button>
                                                 </div>
@@ -555,8 +672,88 @@
                     )}
 
                     {/* ======================================================== */}
-                    {/* MODALES ET FORMULAIRES                                   */}
+                    {/* MODALES ET POPUPS                                        */}
                     {/* ======================================================== */}
+
+                    {/* MODALE DE CLÔTURE DE CAISSE / COMPTES */}
+                    {isCloseShiftOpen && (
+                        <div class="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+                            <div class="bg-brand-card border border-brand-gold rounded-lg p-6 max-w-lg w-full relative max-h-[90vh] overflow-y-auto">
+                                <button onClick={() => setIsCloseShiftOpen(false)} class="absolute top-4 right-4 text-stone-400 hover:text-white">&times;</button>
+                                <h3 class="text-2xl font-serif text-brand-gold font-bold mb-1"><i class="fa-solid fa-calculator mr-2"></i>Clôture de Caisse & Bilans</h3>
+                                <p class="text-xs text-stone-400 mb-6">Récapitulatif financier de la session avant fermeture</p>
+
+                                <div class="bg-brand-dark p-4 rounded border border-brand-border space-y-3 font-mono text-xs mb-6">
+                                    <div class="flex justify-between">
+                                        <span>Nombre Total de Ventes :</span>
+                                        <strong class="text-white">{paidSales.length} ventes</strong>
+                                    </div>
+                                    <div class="flex justify-between text-emerald-400">
+                                        <span>Encaissements Espèces :</span>
+                                        <strong>{paidSales.filter(s => s.paymentMethod === 'Espèces').reduce((a,b) => a + b.total, 0).toLocaleString()} FCFA</strong>
+                                    </div>
+                                    <div class="flex justify-between text-sky-400">
+                                        <span>Encaissements Mobile Money :</span>
+                                        <strong>{paidSales.filter(s => s.paymentMethod === 'Mobile Money').reduce((a,b) => a + b.total, 0).toLocaleString()} FCFA</strong>
+                                    </div>
+                                    <div class="flex justify-between text-purple-400">
+                                        <span>Encaissements Carte :</span>
+                                        <strong>{paidSales.filter(s => s.paymentMethod === 'Carte').reduce((a,b) => a + b.total, 0).toLocaleString()} FCFA</strong>
+                                    </div>
+                                    <div class="border-t border-stone-800 pt-2 flex justify-between text-base text-brand-gold font-bold">
+                                        <span>SOMME FINALE EN MACHINE :</span>
+                                        <span>{paidSales.reduce((a,b) => a + b.total, 0).toLocaleString()} FCFA</span>
+                                    </div>
+                                </div>
+
+                                <form onSubmit={handleClotureCaisse} class="space-y-4">
+                                    <div>
+                                        <label class="block text-xs text-stone-300 font-bold mb-1">Comptage Physique Espèces dans le Tiroir (FCFA)</label>
+                                        <input 
+                                            type="number" 
+                                            required 
+                                            value={cashCountInput} 
+                                            onChange={e => setCashCountInput(e.target.value)} 
+                                            placeholder="Entrez le montant réel compté" 
+                                            class="w-full bg-brand-dark border border-brand-border rounded p-3 text-white text-base font-bold focus:border-brand-gold outline-none"
+                                        />
+                                    </div>
+
+                                    <button type="submit" class="w-full bg-brand-orange hover:bg-orange-700 text-white font-bold py-3 rounded text-sm uppercase tracking-wider">
+                                        Valider la Clôture & Archiver la Session
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* RAPPORT FINAL DE CLÔTURE IMPRIMABLE */}
+                    {lastShiftReport && (
+                        <div class="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4">
+                            <div class="bg-white text-black p-8 rounded-lg max-w-md w-full font-mono text-xs space-y-4 shadow-2xl">
+                                <div class="text-center border-b border-black pb-4">
+                                    <h2 class="text-xl font-bold uppercase">TEMBERMA LOMÉ</h2>
+                                    <p class="text-[10px]">Rapport de Clôture Caisse</p>
+                                    <p class="text-[10px]">{lastShiftReport.date} - {lastShiftReport.time}</p>
+                                </div>
+                                <div class="space-y-1">
+                                    <p>N° Rapport : {lastShiftReport.id}</p>
+                                    <p>Ventes réalisées : {lastShiftReport.totalSalesCount}</p>
+                                    <p>Espèces : {lastShiftReport.totalEspeces.toLocaleString()} FCFA</p>
+                                    <p>Mobile Money : {lastShiftReport.totalMobile.toLocaleString()} FCFA</p>
+                                    <p>Carte : {lastShiftReport.totalCarte.toLocaleString()} FCFA</p>
+                                    <hr class="border-black border-dashed my-2" />
+                                    <p class="text-sm font-bold">TOTAL MACHINE : {lastShiftReport.totalGeneral.toLocaleString()} FCFA</p>
+                                    <p>Espèces Comptés : {lastShiftReport.physicalCash.toLocaleString()} FCFA</p>
+                                    <p class="font-bold">Écart : {lastShiftReport.ecart.toLocaleString()} FCFA</p>
+                                </div>
+                                <div class="pt-4 flex gap-2">
+                                    <button onClick={() => window.print()} class="flex-1 bg-black text-white font-bold py-2 rounded text-xs">Imprimer Ticket</button>
+                                    <button onClick={() => setLastShiftReport(null)} class="flex-1 border border-black font-bold py-2 rounded text-xs">Fermer</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
                     {/* MODALE AJOUT DE PLAT (ADMIN) */}
                     {isAddDishOpen && (
