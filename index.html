@@ -29,10 +29,11 @@
         }
     </script>
 
-    <!-- React & Babel CDNs -->
+    <!-- React, Babel & QRCode CDNs -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.min.js"></script>
 
     <!-- FontAwesome Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -42,7 +43,16 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect } = React;
+        const { useState, useEffect, useRef } = React;
+
+        // --- CODES ACCÈS PERSONNEL ---
+        const STAFF_PIN_CODES = {
+            '0000': { role: 'admin', label: 'Administrateur Général', icon: 'fa-user-shield' },
+            '1111': { role: 'cuisine', label: 'Chef Cuisine', icon: 'fa-utensils' },
+            '2222': { role: 'reception', label: 'Réception / Accueil', icon: 'fa-concierge-bell' },
+            '3333': { role: 'serveur', label: 'Service en Salle', icon: 'fa-person-walking-luggage' },
+            '4444': { role: 'caisse', label: 'Caisse & Facturation', icon: 'fa-cash-register' }
+        };
 
         // --- DONNÉES DU MENU ---
         const MENU_DATA = [
@@ -51,7 +61,7 @@
                 name: "Foutou Banane & Sauce Graine",
                 category: "plats",
                 price: 8500,
-                time: "25-35 min",
+                prepTime: 30,
                 desc: "Banane plantain pilée servie avec une sauce graine riche aux épices de pays et viandes de choix.",
                 badge: "Spécialité",
                 img: "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=800&q=80"
@@ -61,7 +71,7 @@
                 name: "Thiéboudienne Royale",
                 category: "plats",
                 price: 7500,
-                time: "20-30 min",
+                prepTime: 25,
                 desc: "Riz au mérou blanc frais, légumes locaux mijotés et farce d'herbes aromatiques (Mokho).",
                 badge: "Populaire",
                 img: "https://images.unsplash.com/photo-1604382354936-07c5d9983bd3?auto=format&fit=crop&w=800&q=80"
@@ -71,7 +81,7 @@
                 name: "Attiéké Poisson Grillé",
                 category: "plats",
                 price: 6500,
-                time: "15-20 min",
+                prepTime: 20,
                 desc: "Semoule de manioc cuite à la vapeur, servie avec un thon/capitaine grillé et brunoise de tomates/oignons.",
                 badge: "Classique",
                 img: "https://images.unsplash.com/photo-1519708227418-c8fd9a32b7a2?auto=format&fit=crop&w=800&q=80"
@@ -81,7 +91,7 @@
                 name: "Cocktail Heritage Hibiscus",
                 category: "boissons",
                 price: 3000,
-                time: "5 min",
+                prepTime: 5,
                 desc: "Infusion de Bissap, liqueur de gingembre, menthe fraîche et touche de vanille de Madagascar.",
                 badge: "Signature",
                 img: "https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?auto=format&fit=crop&w=800&q=80"
@@ -91,7 +101,7 @@
                 name: "Dégué Onctueux au Miel",
                 category: "desserts",
                 price: 2500,
-                time: "5 min",
+                prepTime: 10,
                 desc: "Couscous de mil, yaourt doux parfumé à la fleur d'oranger et filet de miel sauvage.",
                 badge: "Douceur",
                 img: "https://images.unsplash.com/photo-1563805042-7684c019e1cb?auto=format&fit=crop&w=800&q=80"
@@ -103,12 +113,28 @@
             const [cart, setCart] = useState([]);
             const [isCartOpen, setIsCartOpen] = useState(false);
             const [isResaOpen, setIsResaOpen] = useState(false);
-            const [notification, setNotification] = useState('');
+            const [isStaffLoginOpen, setIsStaffLoginOpen] = useState(false);
+            
+            // États Staff / Commandes / Réservations
+            const [currentStaff, setCurrentStaff] = useState(null);
+            const [pinInput, setPinInput] = useState('');
+            const [orders, setOrders] = useState([]);
+            const [reservations, setReservations] = useState([]);
+            
+            // Reçu & Confirmation Client
+            const [completedOrder, setCompletedOrder] = useState(null);
+            const [completedResa, setCompletedResa] = useState(null);
+
+            // Formulaire de réservation
+            const [resaForm, setResaForm] = useState({
+                name: '', phone: '', date: '', time: '', guests: '2', table: 'Table VIP 1 - Terrasse', preOrder: []
+            });
 
             // Notification Flash
+            const [toast, setToast] = useState('');
             const showToast = (msg) => {
-                setNotification(msg);
-                setTimeout(() => setNotification(''), 3000);
+                setToast(msg);
+                setTimeout(() => setToast(''), 3500);
             };
 
             // Ajout au panier
@@ -120,29 +146,98 @@
                     }
                     return [...prev, { ...item, qty: 1 }];
                 });
-                showToast(`"${item.name}" ajouté à votre commande`);
+                showToast(`"${item.name}" ajouté à la commande`);
             };
 
-            const totalAmount = cart.reduce((acc, item) => acc + (item.price * item.qty), 0);
+            // Validation de commande client
+            const handleCheckout = () => {
+                if (cart.length === 0) return;
+
+                const maxPrepTime = Math.max(...cart.map(item => item.prepTime));
+                const total = cart.reduce((acc, item) => acc + (item.price * item.qty), 0);
+                const newOrder = {
+                    id: 'CMD-' + Math.floor(1000 + Math.random() * 9000),
+                    items: [...cart],
+                    total: total,
+                    prepTime: maxPrepTime,
+                    status: 'En cuisine', // En cuisine -> Prêt -> Payé
+                    createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                    table: 'Table ' + Math.floor(1 + Math.random() * 12)
+                };
+
+                setOrders(prev => [newOrder, ...prev]);
+                setCompletedOrder(newOrder);
+                setCart([]);
+                setIsCartOpen(false);
+            };
+
+            // Validation de réservation
+            const handleResaSubmit = (e) => {
+                e.preventDefault();
+                const newResa = {
+                    id: 'RES-' + Math.floor(1000 + Math.random() * 9000),
+                    ...resaForm,
+                    status: 'Confirmée'
+                };
+                setReservations(prev => [newResa, ...prev]);
+                setCompletedResa(newResa);
+                setIsResaOpen(false);
+            };
+
+            // Connexion Staff par Code PIN
+            const handleStaffLogin = (e) => {
+                e.preventDefault();
+                if (STAFF_PIN_CODES[pinInput]) {
+                    setCurrentStaff(STAFF_PIN_CODES[pinInput]);
+                    setIsStaffLoginOpen(false);
+                    setPinInput('');
+                    showToast(`Bienvenue, ${STAFF_PIN_CODES[pinInput].label}`);
+                } else {
+                    alert('Code PIN incorrect. Exemples: 0000 (Admin), 1111 (Cuisine), 2222 (Réception), 3333 (Serveur), 4444 (Caisse)');
+                }
+            };
+
+            // Mise à jour du statut d'une commande
+            const updateOrderStatus = (orderId, newStatus) => {
+                setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
+                showToast(`Commande ${orderId} mise à jour : ${newStatus}`);
+            };
+
+            // Génération QR Code
+            useEffect(() => {
+                if (completedResa) {
+                    const qrContainer = document.getElementById('qrcode-canvas');
+                    if (qrContainer) {
+                        qrContainer.innerHTML = '';
+                        new QRCode(qrContainer, {
+                            text: `TATA-RESA-${completedResa.id}-${completedResa.name}`,
+                            width: 120,
+                            height: 120,
+                            colorDark : "#120A07",
+                            colorLight : "#D4AF37"
+                        });
+                    }
+                }
+            }, [completedResa]);
 
             const filteredMenu = activeCategory === 'tous' 
                 ? MENU_DATA 
                 : MENU_DATA.filter(item => item.category === activeCategory);
 
             return (
-                <div class="min-h-screen flex flex-col">
+                <div class="min-h-screen flex flex-col relative">
                     
                     {/* TOAST NOTIFICATION */}
-                    {notification && (
+                    {toast && (
                         <div class="fixed bottom-5 right-5 z-50 bg-brand-gold text-black px-4 py-3 rounded-lg shadow-xl font-bold flex items-center gap-2 animate-bounce">
                             <i class="fa-solid fa-circle-check"></i>
-                            {notification}
+                            {toast}
                         </div>
                     )}
 
                     {/* NAVBAR */}
                     <header class="sticky top-0 z-40 bg-brand-dark/95 backdrop-blur-md border-b border-brand-border px-6 py-4 flex items-center justify-between">
-                        <div class="flex items-center gap-2 text-brand-gold font-bold text-2xl tracking-widest">
+                        <div class="flex items-center gap-2 text-brand-gold font-bold text-2xl tracking-widest cursor-pointer" onClick={() => setCurrentStaff(null)}>
                             <i class="fa-solid fa-utensils"></i>
                             <span>TATA</span>
                         </div>
@@ -151,10 +246,19 @@
                             <a href="#accueil" class="hover:text-brand-gold transition">ACCUEIL</a>
                             <a href="#menu" class="hover:text-brand-gold transition">MENU</a>
                             <a href="#histoire" class="hover:text-brand-gold transition">HISTOIRE</a>
-                            <a href="#avis" class="hover:text-brand-gold transition">AVIS</a>
                         </nav>
 
-                        <div class="flex items-center gap-4">
+                        <div class="flex items-center gap-3">
+                            {/* Bouton Espace Personnel */}
+                            <button 
+                                onClick={() => currentStaff ? setCurrentStaff(null) : setIsStaffLoginOpen(true)}
+                                class={`px-3 py-1.5 rounded text-xs font-bold flex items-center gap-2 border transition ${currentStaff ? 'bg-brand-orange text-white border-brand-orange' : 'border-brand-gold/50 text-brand-gold hover:bg-brand-gold/10'}`}
+                            >
+                                <i class={`fa-solid ${currentStaff ? 'fa-user-check' : 'fa-lock'}`}></i>
+                                <span>{currentStaff ? currentStaff.label : 'Espace Staff'}</span>
+                            </button>
+
+                            {/* Panier */}
                             <button 
                                 onClick={() => setIsCartOpen(true)}
                                 class="relative p-2 text-brand-gold hover:text-white transition"
@@ -169,123 +273,378 @@
 
                             <button 
                                 onClick={() => setIsResaOpen(true)}
-                                class="bg-brand-gold hover:bg-brand-gold-hover text-black font-bold px-4 py-2 rounded transition text-sm"
+                                class="bg-brand-gold hover:bg-brand-gold-hover text-black font-bold px-4 py-2 rounded transition text-sm hidden sm:block"
                             >
                                 RÉSERVER
                             </button>
                         </div>
                     </header>
 
-                    {/* HERO SECTION */}
-                    <section id="accueil" class="relative h-[85vh] flex items-center justify-center text-center px-4 bg-cover bg-center" style={{ backgroundImage: `linear-gradient(rgba(18, 10, 7, 0.75), rgba(18, 10, 7, 0.85)), url('https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=1350&q=80')` }}>
-                        <div class="max-w-3xl">
-                            <span class="text-brand-gold text-xs md:text-sm font-bold tracking-[0.3em] uppercase block mb-3">Savoir-faire & Tradition</span>
-                            <h1 class="text-4xl md:text-6xl font-serif font-bold text-white mb-6 leading-tight">L'Élégance de la Gastronomie Africaine</h1>
-                            <p class="text-stone-300 text-base md:text-lg mb-8 max-w-2xl mx-auto">Une expérience culinaire d'exception au cœur de saveurs ancestrales sublimées avec modernité.</p>
-                            <div class="flex flex-col sm:flex-row gap-4 justify-center">
-                                <a href="#menu" class="bg-brand-gold hover:bg-brand-gold-hover text-black font-bold px-6 py-3 rounded transition">DÉCOUVRIR LE MENU</a>
-                                <button onClick={() => setIsResaOpen(true)} class="border border-brand-gold text-brand-gold hover:bg-brand-gold hover:text-black font-bold px-6 py-3 rounded transition">RÉSERVER UNE TABLE</button>
+                    {/* ======================================================== */}
+                    {/* ACCÈS STAFF / TABLEAU DE BORD SI CONNECTÉ */}
+                    {/* ======================================================== */}
+                    {currentStaff ? (
+                        <div class="p-6 max-w-7xl mx-auto w-full flex-1">
+                            <div class="bg-brand-card border border-brand-border rounded-lg p-6 mb-8 flex justify-between items-center">
+                                <div>
+                                    <span class="text-xs text-brand-gold uppercase tracking-widest font-bold">Session Ouverte</span>
+                                    <h2 class="text-2xl font-bold text-white flex items-center gap-2">
+                                        <i class={`fa-solid ${currentStaff.icon} text-brand-gold`}></i>
+                                        Espace {currentStaff.label}
+                                    </h2>
+                                </div>
+                                <button onClick={() => setCurrentStaff(null)} class="bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs font-bold px-4 py-2 rounded">
+                                    Déconnexion
+                                </button>
                             </div>
-                        </div>
-                    </section>
 
-                    {/* MENU SECTION */}
-                    <section id="menu" class="py-20 px-6 max-w-7xl mx-auto w-full">
-                        <div class="text-center mb-12">
-                            <h2 class="text-3xl md:text-4xl font-serif text-brand-gold font-bold mb-2">Notre Menu Gastronomique</h2>
-                            <p class="text-stone-400">Sélectionnez une catégorie et commandez directement en ligne</p>
-                            
-                            {/* CATEGORY FILTERS */}
-                            <div class="flex justify-center gap-3 mt-8 flex-wrap">
-                                {['tous', 'plats', 'boissons', 'desserts'].map(cat => (
-                                    <button 
-                                        key={cat}
-                                        onClick={() => setActiveCategory(cat)}
-                                        class={`px-5 py-2 rounded-full text-sm font-semibold capitalize transition ${activeCategory === cat ? 'bg-brand-gold text-black' : 'bg-brand-card text-stone-300 border border-brand-border hover:border-brand-gold'}`}
-                                    >
-                                        {cat}
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-
-                        {/* MENU GRID */}
-                        <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
-                            {filteredMenu.map(item => (
-                                <div key={item.id} class="bg-brand-card border border-brand-border rounded-lg overflow-hidden flex flex-col hover:border-brand-gold/50 transition">
-                                    <div class="relative h-48 overflow-hidden">
-                                        <img src={item.img} alt={item.name} class="w-full h-full object-cover hover:scale-105 transition duration-500" />
-                                        <span class="absolute top-3 left-3 bg-brand-gold/90 text-black text-xs font-bold px-2.5 py-1 rounded-full">{item.badge}</span>
-                                    </div>
-                                    <div class="p-6 flex-1 flex flex-col justify-between">
-                                        <div>
-                                            <div class="flex justify-between items-start mb-2">
-                                                <h3 class="font-bold text-lg text-white">{item.name}</h3>
-                                                <span class="text-brand-gold font-bold text-sm whitespace-nowrap ml-2">{item.price.toLocaleString()} FCFA</span>
-                                            </div>
-                                            <p class="text-stone-400 text-xs mb-4">{item.desc}</p>
+                            {/* VUE CUISINE (1111) */}
+                            {(currentStaff.role === 'cuisine' || currentStaff.role === 'admin') && (
+                                <div class="mb-12">
+                                    <h3 class="text-xl font-bold text-brand-gold mb-4 flex items-center gap-2"><i class="fa-solid fa-fire-burner"></i> Commandes en Cuisine</h3>
+                                    {orders.filter(o => o.status === 'En cuisine').length === 0 ? (
+                                        <p class="text-stone-500 bg-brand-card p-6 rounded border border-brand-border">Aucune commande en attente en cuisine.</p>
+                                    ) : (
+                                        <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                            {orders.filter(o => o.status === 'En cuisine').map(ord => (
+                                                <div key={ord.id} class="bg-brand-card border-2 border-brand-orange/60 rounded-lg p-5">
+                                                    <div class="flex justify-between items-center mb-3 pb-2 border-b border-brand-border">
+                                                        <span class="font-bold text-white">{ord.id} ({ord.table})</span>
+                                                        <span class="text-xs bg-brand-orange/20 text-brand-orange px-2 py-1 rounded font-bold">{ord.createdAt}</span>
+                                                    </div>
+                                                    <ul class="text-sm space-y-2 mb-4">
+                                                        {ord.items.map((it, idx) => (
+                                                            <li key={idx} class="flex justify-between text-stone-300">
+                                                                <span><strong>{it.qty}x</strong> {it.name}</span>
+                                                            </li>
+                                                        ))}
+                                                    </ul>
+                                                    <button onClick={() => updateOrderStatus(ord.id, 'Prêt à servir')} class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded text-sm transition">
+                                                        Marquer comme Prêt
+                                                    </button>
+                                                </div>
+                                            ))}
                                         </div>
-                                        <div>
-                                            <div class="text-xs text-stone-500 mb-4 flex items-center gap-1">
-                                                <i class="fa-regular fa-clock"></i> {item.time}
-                                            </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* VUE SERVEUR (3333) */}
+                            {(currentStaff.role === 'serveur' || currentStaff.role === 'admin') && (
+                                <div class="mb-12">
+                                    <h3 class="text-xl font-bold text-brand-gold mb-4 flex items-center gap-2"><i class="fa-solid fa-tray"></i> Commandes Prêtes à Servir</h3>
+                                    {orders.filter(o => o.status === 'Prêt à servir').length === 0 ? (
+                                        <p class="text-stone-500 bg-brand-card p-6 rounded border border-brand-border">Aucune commande en attente de service.</p>
+                                    ) : (
+                                        <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                            {orders.filter(o => o.status === 'Prêt à servir').map(ord => (
+                                                <div key={ord.id} class="bg-brand-card border-2 border-emerald-500/60 rounded-lg p-5">
+                                                    <div class="flex justify-between items-center mb-3 pb-2 border-b border-brand-border">
+                                                        <span class="font-bold text-white">{ord.id} - <strong class="text-brand-gold">{ord.table}</strong></span>
+                                                        <span class="text-xs bg-emerald-500/20 text-emerald-400 px-2 py-1 rounded font-bold">PRÊT</span>
+                                                    </div>
+                                                    <button onClick={() => updateOrderStatus(ord.id, 'Servi à table')} class="w-full bg-brand-gold hover:bg-brand-gold-hover text-black font-bold py-2 rounded text-sm transition">
+                                                        Confirmer le Service en Table
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* VUE CAISSE (4444) */}
+                            {(currentStaff.role === 'caisse' || currentStaff.role === 'admin') && (
+                                <div class="mb-12">
+                                    <h3 class="text-xl font-bold text-brand-gold mb-4 flex items-center gap-2"><i class="fa-solid fa-cash-register"></i> Encaisser une Commande</h3>
+                                    {orders.filter(o => o.status !== 'Payé').length === 0 ? (
+                                        <p class="text-stone-500 bg-brand-card p-6 rounded border border-brand-border">Toutes les commandes ont été réglées.</p>
+                                    ) : (
+                                        <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                            {orders.filter(o => o.status !== 'Payé').map(ord => (
+                                                <div key={ord.id} class="bg-brand-card border border-brand-border rounded-lg p-5">
+                                                    <div class="flex justify-between items-center mb-3 pb-2 border-b border-brand-border">
+                                                        <span class="font-bold text-white">{ord.id}</span>
+                                                        <span class="text-brand-gold font-bold">{ord.total.toLocaleString()} FCFA</span>
+                                                    </div>
+                                                    <p class="text-xs text-stone-400 mb-4">Statut actuel : {ord.status}</p>
+                                                    <button onClick={() => updateOrderStatus(ord.id, 'Payé')} class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded text-sm transition">
+                                                        Encaisser & Clôturer
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* VUE RÉCEPTION (2222) */}
+                            {(currentStaff.role === 'reception' || currentStaff.role === 'admin') && (
+                                <div>
+                                    <h3 class="text-xl font-bold text-brand-gold mb-4 flex items-center gap-2"><i class="fa-solid fa-calendar-check"></i> Réservations Clients</h3>
+                                    {reservations.length === 0 ? (
+                                        <p class="text-stone-500 bg-brand-card p-6 rounded border border-brand-border">Aucune réservation enregistrée.</p>
+                                    ) : (
+                                        <div class="space-y-4">
+                                            {reservations.map(res => (
+                                                <div key={res.id} class="bg-brand-card border border-brand-border p-4 rounded-lg flex justify-between items-center">
+                                                    <div>
+                                                        <span class="text-xs text-brand-gold font-bold">{res.id} - {res.date} à {res.time}</span>
+                                                        <h4 class="font-bold text-white">{res.name} ({res.guests} pers.)</h4>
+                                                        <p class="text-xs text-stone-400">Emplacement : {res.table} | Tél: {res.phone}</p>
+                                                    </div>
+                                                    <span class="bg-emerald-900/50 text-emerald-400 border border-emerald-700 text-xs px-3 py-1 rounded font-bold">
+                                                        {res.status}
+                                                    </span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    ) : (
+                        /* ======================================================== */
+                        /* SECTION CLIENT CLASSIQUE                                 */
+                        /* ======================================================== */
+                        <>
+                            {/* HERO SECTION */}
+                            <section id="accueil" class="relative h-[85vh] flex items-center justify-center text-center px-4 bg-cover bg-center" style={{ backgroundImage: `linear-gradient(rgba(18, 10, 7, 0.75), rgba(18, 10, 7, 0.85)), url('https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=1350&q=80')` }}>
+                                <div class="max-w-3xl">
+                                    <span class="text-brand-gold text-xs md:text-sm font-bold tracking-[0.3em] uppercase block mb-3">Savoir-faire & Tradition</span>
+                                    <h1 class="text-4xl md:text-6xl font-serif font-bold text-white mb-6 leading-tight">L'Élégance de la Gastronomie Africaine</h1>
+                                    <p class="text-stone-300 text-base md:text-lg mb-8 max-w-2xl mx-auto">Une expérience culinaire d'exception au cœur de saveurs ancestrales sublimées avec modernité.</p>
+                                    <div class="flex flex-col sm:flex-row gap-4 justify-center">
+                                        <a href="#menu" class="bg-brand-gold hover:bg-brand-gold-hover text-black font-bold px-6 py-3 rounded transition">DÉCOUVRIR LE MENU</a>
+                                        <button onClick={() => setIsResaOpen(true)} class="border border-brand-gold text-brand-gold hover:bg-brand-gold hover:text-black font-bold px-6 py-3 rounded transition">RÉSERVER UNE TABLE</button>
+                                    </div>
+                                </div>
+                            </section>
+
+                            {/* MENU SECTION */}
+                            <section id="menu" class="py-20 px-6 max-w-7xl mx-auto w-full">
+                                <div class="text-center mb-12">
+                                    <h2 class="text-3xl md:text-4xl font-serif text-brand-gold font-bold mb-2">Notre Menu Gastronomique</h2>
+                                    <p class="text-stone-400">Sélectionnez une catégorie et commandez directement en ligne</p>
+                                    
+                                    <div class="flex justify-center gap-3 mt-8 flex-wrap">
+                                        {['tous', 'plats', 'boissons', 'desserts'].map(cat => (
                                             <button 
-                                                onClick={() => addToCart(item)}
-                                                class="w-full bg-brand-gold/10 hover:bg-brand-gold text-brand-gold hover:text-black border border-brand-gold/30 font-bold py-2 rounded transition text-sm flex items-center justify-center gap-2"
+                                                key={cat}
+                                                onClick={() => setActiveCategory(cat)}
+                                                class={`px-5 py-2 rounded-full text-sm font-semibold capitalize transition ${activeCategory === cat ? 'bg-brand-gold text-black' : 'bg-brand-card text-stone-300 border border-brand-border hover:border-brand-gold'}`}
                                             >
-                                                <i class="fa-solid fa-plus"></i> Ajouter à la commande
+                                                {cat}
                                             </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+                                    {filteredMenu.map(item => (
+                                        <div key={item.id} class="bg-brand-card border border-brand-border rounded-lg overflow-hidden flex flex-col hover:border-brand-gold/50 transition">
+                                            <div class="relative h-48 overflow-hidden">
+                                                <img src={item.img} alt={item.name} class="w-full h-full object-cover hover:scale-105 transition duration-500" />
+                                                <span class="absolute top-3 left-3 bg-brand-gold/90 text-black text-xs font-bold px-2.5 py-1 rounded-full">{item.badge}</span>
+                                            </div>
+                                            <div class="p-6 flex-1 flex flex-col justify-between">
+                                                <div>
+                                                    <div class="flex justify-between items-start mb-2">
+                                                        <h3 class="font-bold text-lg text-white">{item.name}</h3>
+                                                        <span class="text-brand-gold font-bold text-sm whitespace-nowrap ml-2">{item.price.toLocaleString()} FCFA</span>
+                                                    </div>
+                                                    <p class="text-stone-400 text-xs mb-4">{item.desc}</p>
+                                                </div>
+                                                <div>
+                                                    <div class="text-xs text-stone-500 mb-4 flex items-center gap-1">
+                                                        <i class="fa-regular fa-clock"></i> Préparation : ~{item.prepTime} min
+                                                    </div>
+                                                    <button 
+                                                        onClick={() => addToCart(item)}
+                                                        class="w-full bg-brand-gold/10 hover:bg-brand-gold text-brand-gold hover:text-black border border-brand-gold/30 font-bold py-2 rounded transition text-sm flex items-center justify-center gap-2"
+                                                    >
+                                                        <i class="fa-solid fa-plus"></i> Ajouter à la commande
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </section>
+                        </>
+                    )}
+
+                    {/* ======================================================== */}
+                    {/* MODALES & NOTIFICATIONS                                  */}
+                    {/* ======================================================== */}
+
+                    {/* MODALE REÇU & CONFIRMATION COMMANDE */}
+                    {completedOrder && (
+                        <div class="fixed inset-0 z-50 bg-black/90 backdrop-blur-sm flex items-center justify-center p-4">
+                            <div class="bg-stone-900 border-2 border-brand-gold rounded-lg p-6 max-w-md w-full text-center relative animate-fade-in shadow-2xl">
+                                <i class="fa-solid fa-circle-check text-5xl text-brand-gold mb-3"></i>
+                                <h3 class="text-2xl font-bold text-white mb-1">Merci pour votre commande !</h3>
+                                <p class="text-xs text-stone-400 mb-4">Votre commande a bien été reçue par notre cuisine.</p>
+
+                                <div class="bg-brand-dark p-4 rounded-lg border border-brand-border text-left mb-6 font-mono text-xs text-stone-300">
+                                    <div class="text-center font-bold text-brand-gold text-sm mb-2 border-b border-stone-800 pb-2">
+                                        REÇU DE CAISSE TATA
+                                    </div>
+                                    <div class="flex justify-between mb-1">
+                                        <span>N° Commande:</span>
+                                        <span class="text-white font-bold">{completedOrder.id}</span>
+                                    </div>
+                                    <div class="flex justify-between mb-3">
+                                        <span>Table attribuée:</span>
+                                        <span class="text-white font-bold">{completedOrder.table}</span>
+                                    </div>
+                                    
+                                    <div class="border-t border-b border-stone-800 py-2 my-2 space-y-1">
+                                        {completedOrder.items.map((it, idx) => (
+                                            <div key={idx} class="flex justify-between">
+                                                <span>{it.qty}x {it.name}</span>
+                                                <span class="text-white">{(it.price * it.qty).toLocaleString()} FCFA</span>
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    <div class="flex justify-between text-sm font-bold text-brand-gold pt-1">
+                                        <span>TOTAL ADDITION:</span>
+                                        <span>{completedOrder.total.toLocaleString()} FCFA</span>
+                                    </div>
+                                </div>
+
+                                <div class="bg-brand-orange/20 border border-brand-orange/50 p-3 rounded mb-6 text-brand-gold text-sm font-bold flex items-center justify-center gap-2">
+                                    <i class="fa-regular fa-clock text-lg"></i>
+                                    <span>Temps d'attente estimé : {completedOrder.prepTime} minutes</span>
+                                </div>
+
+                                <button onClick={() => setCompletedOrder(null)} class="w-full bg-brand-gold hover:bg-brand-gold-hover text-black font-bold py-3 rounded transition">
+                                    Fermer et suivre la commande
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* MODALE QR CODE & CONFIRMATION RÉSERVATION */}
+                    {completedResa && (
+                        <div class="fixed inset-0 z-50 bg-black/90 backdrop-blur-sm flex items-center justify-center p-4">
+                            <div class="bg-stone-900 border-2 border-brand-gold rounded-lg p-6 max-w-md w-full text-center relative">
+                                <h3 class="text-2xl font-serif text-brand-gold font-bold mb-2">Merci pour votre réservation !</h3>
+                                <p class="text-xs text-stone-300 mb-4">Un pass QR Code a été généré pour votre venue.</p>
+
+                                <div class="bg-white p-4 rounded-lg inline-block mb-4">
+                                    <div id="qrcode-canvas"></div>
+                                </div>
+
+                                <div class="text-xs text-stone-400 space-y-1 mb-6 text-left bg-brand-card p-3 rounded border border-brand-border">
+                                    <p><strong class="text-white">Réservation N°:</strong> {completedResa.id}</p>
+                                    <p><strong class="text-white">Nom:</strong> {completedResa.name}</p>
+                                    <p><strong class="text-white">Date & Heure:</strong> {completedResa.date} à {completedResa.time}</p>
+                                    <p><strong class="text-white">Table réservée:</strong> {completedResa.table}</p>
+                                </div>
+
+                                <button onClick={() => setCompletedResa(null)} class="w-full bg-brand-gold text-black font-bold py-2 rounded">
+                                    Terminer
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* MODALE LOGIN STAFF / CODE PIN */}
+                    {isStaffLoginOpen && (
+                        <div class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+                            <div class="bg-brand-card border border-brand-border rounded-lg p-6 max-w-sm w-full relative">
+                                <button onClick={() => setIsStaffLoginOpen(false)} class="absolute top-4 right-4 text-stone-400 hover:text-white">&times;</button>
+                                <h3 class="text-xl font-bold text-brand-gold mb-4 text-center">Accès Personnel TATA</h3>
+                                <form onSubmit={handleStaffLogin} class="space-y-4">
+                                    <div>
+                                        <label class="block text-xs text-stone-400 mb-2">Entrez votre code PIN à 4 chiffres :</label>
+                                        <input 
+                                            type="password" 
+                                            maxLength="4" 
+                                            value={pinInput} 
+                                            onChange={(e) => setPinInput(e.target.value)}
+                                            placeholder="Ex: 0000, 1111, 2222..."
+                                            required 
+                                            class="w-full bg-brand-dark border border-brand-border text-center text-2xl tracking-widest rounded p-3 text-white focus:border-brand-gold outline-none"
+                                        />
+                                    </div>
+                                    <div class="text-[10px] text-stone-500 bg-brand-dark p-2 rounded border border-brand-border">
+                                        <p class="font-bold text-stone-400 mb-1">Aide Codes de Démo :</p>
+                                        <p>• Admin: 0000 | Cuisine: 1111</p>
+                                        <p>• Réception: 2222 | Serveur: 3333 | Caisse: 4444</p>
+                                    </div>
+                                    <button type="submit" class="w-full bg-brand-gold text-black font-bold py-2 rounded">
+                                        Valider l'accès
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* MODALE RÉSERVATION FORMULAIRE */}
+                    {isResaOpen && (
+                        <div class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+                            <div class="bg-brand-card border border-brand-border rounded-lg p-6 max-w-lg w-full relative my-8">
+                                <button onClick={() => setIsResaOpen(false)} class="absolute top-4 right-4 text-stone-400 hover:text-white text-xl">&times;</button>
+                                <h3 class="text-2xl font-serif text-brand-gold font-bold mb-4">Réserver une Table</h3>
+                                
+                                <form onSubmit={handleResaSubmit} class="space-y-4">
+                                    <div class="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label class="block text-xs text-stone-400 mb-1">Nom Complet</label>
+                                            <input type="text" required value={resaForm.name} onChange={e => setResaForm({...resaForm, name: e.target.value})} class="w-full bg-brand-dark border border-brand-border rounded p-2 text-white text-sm focus:border-brand-gold outline-none" />
+                                        </div>
+                                        <div>
+                                            <label class="block text-xs text-stone-400 mb-1">Téléphone</label>
+                                            <input type="tel" required value={resaForm.phone} onChange={e => setResaForm({...resaForm, phone: e.target.value})} class="w-full bg-brand-dark border border-brand-border rounded p-2 text-white text-sm focus:border-brand-gold outline-none" />
                                         </div>
                                     </div>
-                                </div>
-                            ))}
-                        </div>
-                    </section>
 
-                    {/* HISTOIRE & CONCEPT */}
-                    <section id="histoire" class="py-20 px-6 bg-brand-card/50 border-y border-brand-border">
-                        <div class="max-w-7xl mx-auto grid md:grid-cols-2 gap-12 items-center">
-                            <div>
-                                <span class="text-brand-gold text-xs font-bold tracking-widest uppercase block mb-2">Notre Histoire</span>
-                                <h2 class="text-3xl md:text-4xl font-serif text-white font-bold mb-6">Une Forteresse de Saveurs</h2>
-                                <p class="text-stone-300 mb-4 leading-relaxed">Inspiré des célèbres <strong class="text-brand-gold">Tatas Temberma</strong>, fortifications traditionnelles classées au patrimoine mondial de l'UNESCO, le restaurant TATA protège et valorise l'héritage culinaire africain.</p>
-                                <p class="text-stone-400 mb-8 leading-relaxed">Chaque recette est une histoire, chaque épice un voyage entre tradition séculaire et haute gastronomie moderne.</p>
-                                
-                                <div class="grid grid-cols-3 gap-4 text-center">
-                                    <div class="p-4 bg-brand-card rounded border border-brand-border">
-                                        <div class="text-2xl font-bold text-brand-gold">100%</div>
-                                        <div class="text-xs text-stone-400">Frais & Local</div>
+                                    <div class="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label class="block text-xs text-stone-400 mb-1">Date</label>
+                                            <input type="date" required value={resaForm.date} onChange={e => setResaForm({...resaForm, date: e.target.value})} class="w-full bg-brand-dark border border-brand-border rounded p-2 text-white text-sm focus:border-brand-gold outline-none" />
+                                        </div>
+                                        <div>
+                                            <label class="block text-xs text-stone-400 mb-1">Heure</label>
+                                            <input type="time" required value={resaForm.time} onChange={e => setResaForm({...resaForm, time: e.target.value})} class="w-full bg-brand-dark border border-brand-border rounded p-2 text-white text-sm focus:border-brand-gold outline-none" />
+                                        </div>
                                     </div>
-                                    <div class="p-4 bg-brand-card rounded border border-brand-border">
-                                        <div class="text-2xl font-bold text-brand-gold">15+</div>
-                                        <div class="text-xs text-stone-400">Chefs Experts</div>
+
+                                    <div>
+                                        <label class="block text-xs text-stone-400 mb-1">Sélectionnez l'emplacement / Table</label>
+                                        <select value={resaForm.table} onChange={e => setResaForm({...resaForm, table: e.target.value})} class="w-full bg-brand-dark border border-brand-border rounded p-2 text-white text-sm focus:border-brand-gold outline-none">
+                                            <option>Table VIP 1 - Terrasse Panoramique</option>
+                                            <option>Table 2 - Salle Principale</option>
+                                            <option>Table Intimiste 3 - Alcôve</option>
+                                            <option>Grande Table Famille (8 pers.)</option>
+                                        </select>
                                     </div>
-                                    <div class="p-4 bg-brand-card rounded border border-brand-border">
-                                        <div class="text-2xl font-bold text-brand-gold">4.9/5</div>
-                                        <div class="text-xs text-stone-400">Avis Clients</div>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="relative">
-                                <img src="https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=800&q=80" alt="Cadre du restaurant" class="rounded-lg border border-brand-border shadow-2xl" />
+
+                                    <button type="submit" class="w-full bg-brand-gold text-black font-bold py-3 rounded transition mt-4">
+                                        Confirmer et obtenir mon Pass QR Code
+                                    </button>
+                                </form>
                             </div>
                         </div>
-                    </section>
+                    )}
 
-                    {/* MODAL PANIER / PANNEAU LATÉRAL */}
+                    {/* PANIER SLIDE-OVER */}
                     {isCartOpen && (
                         <div class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex justify-end">
-                            <div class="bg-brand-card w-full max-w-md h-full p-6 flex flex-col justify-between border-l border-brand-border animate-fade-in">
+                            <div class="bg-brand-card w-full max-w-md h-full p-6 flex flex-col justify-between border-l border-brand-border">
                                 <div>
                                     <div class="flex justify-between items-center pb-4 mb-4 border-b border-brand-border">
                                         <h3 class="text-xl font-bold text-white flex items-center gap-2">
-                                            <i class="fa-solid fa-basket-shopping text-brand-gold"></i> Votre Commande
+                                            <i class="fa-solid fa-basket-shopping text-brand-gold"></i> Commande Instantanée
                                         </h3>
                                         <button onClick={() => setIsCartOpen(false)} class="text-stone-400 hover:text-white text-xl">&times;</button>
                                     </div>
 
                                     {cart.length === 0 ? (
-                                        <p class="text-stone-500 text-center py-10">Votre panier est vide pour le moment.</p>
+                                        <p class="text-stone-500 text-center py-10">Votre panier est vide.</p>
                                     ) : (
                                         <div class="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
                                             {cart.map(item => (
@@ -294,9 +653,7 @@
                                                         <h4 class="font-semibold text-sm text-white">{item.name}</h4>
                                                         <p class="text-xs text-brand-gold">{item.price.toLocaleString()} FCFA</p>
                                                     </div>
-                                                    <div class="flex items-center gap-2">
-                                                        <span class="text-sm font-bold bg-brand-card px-2 py-1 rounded text-stone-300">x{item.qty}</span>
-                                                    </div>
+                                                    <span class="text-sm font-bold bg-brand-card px-2 py-1 rounded text-stone-300">x{item.qty}</span>
                                                 </div>
                                             ))}
                                         </div>
@@ -306,18 +663,13 @@
                                 {cart.length > 0 && (
                                     <div class="border-t border-brand-border pt-4">
                                         <div class="flex justify-between items-center mb-6">
-                                            <span class="text-stone-400">Total estimé :</span>
-                                            <span class="text-2xl font-bold text-brand-gold">{totalAmount.toLocaleString()} FCFA</span>
+                                            <span class="text-stone-400">Total :</span>
+                                            <span class="text-2xl font-bold text-brand-gold">
+                                                {cart.reduce((acc, item) => acc + (item.price * item.qty), 0).toLocaleString()} FCFA
+                                            </span>
                                         </div>
-                                        <button 
-                                            onClick={() => {
-                                                alert("Commande validée ! Merci de votre confiance.");
-                                                setCart([]);
-                                                setIsCartOpen(false);
-                                            }}
-                                            class="w-full bg-brand-gold hover:bg-brand-gold-hover text-black font-bold py-3 rounded transition text-center"
-                                        >
-                                            Valider la commande
+                                        <button onClick={handleCheckout} class="w-full bg-brand-gold text-black font-bold py-3 rounded text-center">
+                                            Valider & Générer le Ticket de Caisse
                                         </button>
                                     </div>
                                 )}
@@ -325,77 +677,9 @@
                         </div>
                     )}
 
-                    {/* MODAL RÉSERVATION */}
-                    {isResaOpen && (
-                        <div class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-                            <div class="bg-brand-card border border-brand-border rounded-lg p-6 max-w-md w-full relative">
-                                <button onClick={() => setIsResaOpen(false)} class="absolute top-4 right-4 text-stone-400 hover:text-white text-xl">&times;</button>
-                                <h3 class="text-2xl font-serif text-brand-gold font-bold mb-4">Réserver une Table</h3>
-                                <form onSubmit={(e) => {
-                                    e.preventDefault();
-                                    alert("Votre demande de réservation a bien été envoyée !");
-                                    setIsResaOpen(false);
-                                }} class="space-y-4">
-                                    <div>
-                                        <label class="block text-xs text-stone-400 mb-1">Nom Complet</label>
-                                        <input type="text" required class="w-full bg-brand-dark border border-brand-border rounded p-2 text-white focus:border-brand-gold outline-none" />
-                                    </div>
-                                    <div class="grid grid-cols-2 gap-4">
-                                        <div>
-                                            <label class="block text-xs text-stone-400 mb-1">Date</label>
-                                            <input type="date" required class="w-full bg-brand-dark border border-brand-border rounded p-2 text-white focus:border-brand-gold outline-none" />
-                                        </div>
-                                        <div>
-                                            <label class="block text-xs text-stone-400 mb-1">Heure</label>
-                                            <input type="time" required class="w-full bg-brand-dark border border-brand-border rounded p-2 text-white focus:border-brand-gold outline-none" />
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <label class="block text-xs text-stone-400 mb-1">Nombre de personnes</label>
-                                        <select class="w-full bg-brand-dark border border-brand-border rounded p-2 text-white focus:border-brand-gold outline-none">
-                                            <option>1 Personne</option>
-                                            <option>2 Personnes</option>
-                                            <option>4 Personnes</option>
-                                            <option>6+ Personnes</option>
-                                        </select>
-                                    </div>
-                                    <button type="submit" class="w-full bg-brand-gold hover:bg-brand-gold-hover text-black font-bold py-3 rounded transition mt-4">
-                                        Confirmer la réservation
-                                    </button>
-                                </form>
-                            </div>
-                        </div>
-                    )}
-
                     {/* FOOTER */}
-                    <footer class="mt-auto bg-black border-t border-brand-border py-10 px-6 text-stone-400 text-sm">
-                        <div class="max-w-7xl mx-auto grid md:grid-cols-4 gap-8 mb-8">
-                            <div>
-                                <div class="text-brand-gold font-bold text-xl mb-3">TATA</div>
-                                <p class="text-xs">Sublimer la cuisine africaine dans un cadre moderne et raffiné.</p>
-                            </div>
-                            <div>
-                                <h4 class="text-white font-bold mb-3">Horaires</h4>
-                                <p class="text-xs">Lun - Ven : 11h30 - 23h00</p>
-                                <p class="text-xs">Sam - Dim : 12h00 - 00h00</p>
-                            </div>
-                            <div>
-                                <h4 class="text-white font-bold mb-3">Contact</h4>
-                                <p class="text-xs">Boulevard du 13 Janvier, Lomé</p>
-                                <p class="text-xs">+228 90 00 00 00</p>
-                            </div>
-                            <div>
-                                <h4 class="text-white font-bold mb-3">Suivez-nous</h4>
-                                <div class="flex gap-4 text-brand-gold text-lg">
-                                    <a href="#"><i class="fa-brands fa-instagram"></i></a>
-                                    <a href="#"><i class="fa-brands fa-facebook"></i></a>
-                                    <a href="#"><i class="fa-brands fa-whatsapp"></i></a>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="text-center pt-6 border-t border-brand-border/50 text-xs">
-                            &copy; 2026 TATA Restaurant. Tous droits réservés.
-                        </div>
+                    <footer class="mt-auto bg-black border-t border-brand-border py-8 px-6 text-stone-400 text-xs text-center">
+                        &copy; 2026 TATA Restaurant. Tous droits réservés.
                     </footer>
 
                 </div>
