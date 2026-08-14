@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="fr" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TATA - Gastronomie & Heritage Africain</title>
+
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            dark: '#120A07',
+                            card: '#1D120C',
+                            gold: '#D4AF37',
+                            'gold-hover': '#b89528',
+                            orange: '#C85A17',
+                            border: '#332016'
+                        }
+                    },
+                    fontFamily: {
+                        serif: ['Georgia', 'serif']
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- React & Babel CDNs -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="bg-brand-dark text-stone-100 font-sans antialiased selection:bg-brand-gold selection:text-black">
+
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // --- DONNÉES DU MENU ---
+        const MENU_DATA = [
+            {
+                id: 1,
+                name: "Foutou Banane & Sauce Graine",
+                category: "plats",
+                price: 8500,
+                time: "25-35 min",
+                desc: "Banane plantain pilée servie avec une sauce graine riche aux épices de pays et viandes de choix.",
+                badge: "Spécialité",
+                img: "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=800&q=80"
+            },
+            {
+                id: 2,
+                name: "Thiéboudienne Royale",
+                category: "plats",
+                price: 7500,
+                time: "20-30 min",
+                desc: "Riz au mérou blanc frais, légumes locaux mijotés et farce d'herbes aromatiques (Mokho).",
+                badge: "Populaire",
+                img: "https://images.unsplash.com/photo-1604382354936-07c5d9983bd3?auto=format&fit=crop&w=800&q=80"
+            },
+            {
+                id: 3,
+                name: "Attiéké Poisson Grillé",
+                category: "plats",
+                price: 6500,
+                time: "15-20 min",
+                desc: "Semoule de manioc cuite à la vapeur, servie avec un thon/capitaine grillé et brunoise de tomates/oignons.",
+                badge: "Classique",
+                img: "https://images.unsplash.com/photo-1519708227418-c8fd9a32b7a2?auto=format&fit=crop&w=800&q=80"
+            },
+            {
+                id: 4,
+                name: "Cocktail Heritage Hibiscus",
+                category: "boissons",
+                price: 3000,
+                time: "5 min",
+                desc: "Infusion de Bissap, liqueur de gingembre, menthe fraîche et touche de vanille de Madagascar.",
+                badge: "Signature",
+                img: "https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?auto=format&fit=crop&w=800&q=80"
+            },
+            {
+                id: 5,
+                name: "Dégué Onctueux au Miel",
+                category: "desserts",
+                price: 2500,
+                time: "5 min",
+                desc: "Couscous de mil, yaourt doux parfumé à la fleur d'oranger et filet de miel sauvage.",
+                badge: "Douceur",
+                img: "https://images.unsplash.com/photo-1563805042-7684c019e1cb?auto=format&fit=crop&w=800&q=80"
+            }
+        ];
+
+        function App() {
+            const [activeCategory, setActiveCategory] = useState('tous');
+            const [cart, setCart] = useState([]);
+            const [isCartOpen, setIsCartOpen] = useState(false);
+            const [isResaOpen, setIsResaOpen] = useState(false);
+            const [notification, setNotification] = useState('');
+
+            // Notification Flash
+            const showToast = (msg) => {
+                setNotification(msg);
+                setTimeout(() => setNotification(''), 3000);
+            };
+
+            // Ajout au panier
+            const addToCart = (item) => {
+                setCart(prev => {
+                    const existing = prev.find(i => i.id === item.id);
+                    if (existing) {
+                        return prev.map(i => i.id === item.id ? { ...i, qty: i.qty + 1 } : i);
+                    }
+                    return [...prev, { ...item, qty: 1 }];
+                });
+                showToast(`"${item.name}" ajouté à votre commande`);
+            };
+
+            const totalAmount = cart.reduce((acc, item) => acc + (item.price * item.qty), 0);
+
+            const filteredMenu = activeCategory === 'tous' 
+                ? MENU_DATA 
+                : MENU_DATA.filter(item => item.category === activeCategory);
+
+            return (
+                <div class="min-h-screen flex flex-col">
+                    
+                    {/* TOAST NOTIFICATION */}
+                    {notification && (
+                        <div class="fixed bottom-5 right-5 z-50 bg-brand-gold text-black px-4 py-3 rounded-lg shadow-xl font-bold flex items-center gap-2 animate-bounce">
+                            <i class="fa-solid fa-circle-check"></i>
+                            {notification}
+                        </div>
+                    )}
+
+                    {/* NAVBAR */}
+                    <header class="sticky top-0 z-40 bg-brand-dark/95 backdrop-blur-md border-b border-brand-border px-6 py-4 flex items-center justify-between">
+                        <div class="flex items-center gap-2 text-brand-gold font-bold text-2xl tracking-widest">
+                            <i class="fa-solid fa-utensils"></i>
+                            <span>TATA</span>
+                        </div>
+
+                        <nav class="hidden md:flex items-center gap-8 text-sm font-semibold text-stone-300">
+                            <a href="#accueil" class="hover:text-brand-gold transition">ACCUEIL</a>
+                            <a href="#menu" class="hover:text-brand-gold transition">MENU</a>
+                            <a href="#histoire" class="hover:text-brand-gold transition">HISTOIRE</a>
+                            <a href="#avis" class="hover:text-brand-gold transition">AVIS</a>
+                        </nav>
+
+                        <div class="flex items-center gap-4">
+                            <button 
+                                onClick={() => setIsCartOpen(true)}
+                                class="relative p-2 text-brand-gold hover:text-white transition"
+                            >
+                                <i class="fa-solid fa-basket-shopping text-xl"></i>
+                                {cart.length > 0 && (
+                                    <span class="absolute -top-1 -right-1 bg-brand-orange text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-bold">
+                                        {cart.reduce((a,b) => a + b.qty, 0)}
+                                    </span>
+                                )}
+                            </button>
+
+                            <button 
+                                onClick={() => setIsResaOpen(true)}
+                                class="bg-brand-gold hover:bg-brand-gold-hover text-black font-bold px-4 py-2 rounded transition text-sm"
+                            >
+                                RÉSERVER
+                            </button>
+                        </div>
+                    </header>
+
+                    {/* HERO SECTION */}
+                    <section id="accueil" class="relative h-[85vh] flex items-center justify-center text-center px-4 bg-cover bg-center" style={{ backgroundImage: `linear-gradient(rgba(18, 10, 7, 0.75), rgba(18, 10, 7, 0.85)), url('https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=1350&q=80')` }}>
+                        <div class="max-w-3xl">
+                            <span class="text-brand-gold text-xs md:text-sm font-bold tracking-[0.3em] uppercase block mb-3">Savoir-faire & Tradition</span>
+                            <h1 class="text-4xl md:text-6xl font-serif font-bold text-white mb-6 leading-tight">L'Élégance de la Gastronomie Africaine</h1>
+                            <p class="text-stone-300 text-base md:text-lg mb-8 max-w-2xl mx-auto">Une expérience culinaire d'exception au cœur de saveurs ancestrales sublimées avec modernité.</p>
+                            <div class="flex flex-col sm:flex-row gap-4 justify-center">
+                                <a href="#menu" class="bg-brand-gold hover:bg-brand-gold-hover text-black font-bold px-6 py-3 rounded transition">DÉCOUVRIR LE MENU</a>
+                                <button onClick={() => setIsResaOpen(true)} class="border border-brand-gold text-brand-gold hover:bg-brand-gold hover:text-black font-bold px-6 py-3 rounded transition">RÉSERVER UNE TABLE</button>
+                            </div>
+                        </div>
+                    </section>
+
+                    {/* MENU SECTION */}
+                    <section id="menu" class="py-20 px-6 max-w-7xl mx-auto w-full">
+                        <div class="text-center mb-12">
+                            <h2 class="text-3xl md:text-4xl font-serif text-brand-gold font-bold mb-2">Notre Menu Gastronomique</h2>
+                            <p class="text-stone-400">Sélectionnez une catégorie et commandez directement en ligne</p>
+                            
+                            {/* CATEGORY FILTERS */}
+                            <div class="flex justify-center gap-3 mt-8 flex-wrap">
+                                {['tous', 'plats', 'boissons', 'desserts'].map(cat => (
+                                    <button 
+                                        key={cat}
+                                        onClick={() => setActiveCategory(cat)}
+                                        class={`px-5 py-2 rounded-full text-sm font-semibold capitalize transition ${activeCategory === cat ? 'bg-brand-gold text-black' : 'bg-brand-card text-stone-300 border border-brand-border hover:border-brand-gold'}`}
+                                    >
+                                        {cat}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* MENU GRID */}
+                        <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+                            {filteredMenu.map(item => (
+                                <div key={item.id} class="bg-brand-card border border-brand-border rounded-lg overflow-hidden flex flex-col hover:border-brand-gold/50 transition">
+                                    <div class="relative h-48 overflow-hidden">
+                                        <img src={item.img} alt={item.name} class="w-full h-full object-cover hover:scale-105 transition duration-500" />
+                                        <span class="absolute top-3 left-3 bg-brand-gold/90 text-black text-xs font-bold px-2.5 py-1 rounded-full">{item.badge}</span>
+                                    </div>
+                                    <div class="p-6 flex-1 flex flex-col justify-between">
+                                        <div>
+                                            <div class="flex justify-between items-start mb-2">
+                                                <h3 class="font-bold text-lg text-white">{item.name}</h3>
+                                                <span class="text-brand-gold font-bold text-sm whitespace-nowrap ml-2">{item.price.toLocaleString()} FCFA</span>
+                                            </div>
+                                            <p class="text-stone-400 text-xs mb-4">{item.desc}</p>
+                                        </div>
+                                        <div>
+                                            <div class="text-xs text-stone-500 mb-4 flex items-center gap-1">
+                                                <i class="fa-regular fa-clock"></i> {item.time}
+                                            </div>
+                                            <button 
+                                                onClick={() => addToCart(item)}
+                                                class="w-full bg-brand-gold/10 hover:bg-brand-gold text-brand-gold hover:text-black border border-brand-gold/30 font-bold py-2 rounded transition text-sm flex items-center justify-center gap-2"
+                                            >
+                                                <i class="fa-solid fa-plus"></i> Ajouter à la commande
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </section>
+
+                    {/* HISTOIRE & CONCEPT */}
+                    <section id="histoire" class="py-20 px-6 bg-brand-card/50 border-y border-brand-border">
+                        <div class="max-w-7xl mx-auto grid md:grid-cols-2 gap-12 items-center">
+                            <div>
+                                <span class="text-brand-gold text-xs font-bold tracking-widest uppercase block mb-2">Notre Histoire</span>
+                                <h2 class="text-3xl md:text-4xl font-serif text-white font-bold mb-6">Une Forteresse de Saveurs</h2>
+                                <p class="text-stone-300 mb-4 leading-relaxed">Inspiré des célèbres <strong class="text-brand-gold">Tatas Temberma</strong>, fortifications traditionnelles classées au patrimoine mondial de l'UNESCO, le restaurant TATA protège et valorise l'héritage culinaire africain.</p>
+                                <p class="text-stone-400 mb-8 leading-relaxed">Chaque recette est une histoire, chaque épice un voyage entre tradition séculaire et haute gastronomie moderne.</p>
+                                
+                                <div class="grid grid-cols-3 gap-4 text-center">
+                                    <div class="p-4 bg-brand-card rounded border border-brand-border">
+                                        <div class="text-2xl font-bold text-brand-gold">100%</div>
+                                        <div class="text-xs text-stone-400">Frais & Local</div>
+                                    </div>
+                                    <div class="p-4 bg-brand-card rounded border border-brand-border">
+                                        <div class="text-2xl font-bold text-brand-gold">15+</div>
+                                        <div class="text-xs text-stone-400">Chefs Experts</div>
+                                    </div>
+                                    <div class="p-4 bg-brand-card rounded border border-brand-border">
+                                        <div class="text-2xl font-bold text-brand-gold">4.9/5</div>
+                                        <div class="text-xs text-stone-400">Avis Clients</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="relative">
+                                <img src="https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=800&q=80" alt="Cadre du restaurant" class="rounded-lg border border-brand-border shadow-2xl" />
+                            </div>
+                        </div>
+                    </section>
+
+                    {/* MODAL PANIER / PANNEAU LATÉRAL */}
+                    {isCartOpen && (
+                        <div class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex justify-end">
+                            <div class="bg-brand-card w-full max-w-md h-full p-6 flex flex-col justify-between border-l border-brand-border animate-fade-in">
+                                <div>
+                                    <div class="flex justify-between items-center pb-4 mb-4 border-b border-brand-border">
+                                        <h3 class="text-xl font-bold text-white flex items-center gap-2">
+                                            <i class="fa-solid fa-basket-shopping text-brand-gold"></i> Votre Commande
+                                        </h3>
+                                        <button onClick={() => setIsCartOpen(false)} class="text-stone-400 hover:text-white text-xl">&times;</button>
+                                    </div>
+
+                                    {cart.length === 0 ? (
+                                        <p class="text-stone-500 text-center py-10">Votre panier est vide pour le moment.</p>
+                                    ) : (
+                                        <div class="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
+                                            {cart.map(item => (
+                                                <div key={item.id} class="flex justify-between items-center bg-brand-dark p-3 rounded border border-brand-border">
+                                                    <div>
+                                                        <h4 class="font-semibold text-sm text-white">{item.name}</h4>
+                                                        <p class="text-xs text-brand-gold">{item.price.toLocaleString()} FCFA</p>
+                                                    </div>
+                                                    <div class="flex items-center gap-2">
+                                                        <span class="text-sm font-bold bg-brand-card px-2 py-1 rounded text-stone-300">x{item.qty}</span>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+
+                                {cart.length > 0 && (
+                                    <div class="border-t border-brand-border pt-4">
+                                        <div class="flex justify-between items-center mb-6">
+                                            <span class="text-stone-400">Total estimé :</span>
+                                            <span class="text-2xl font-bold text-brand-gold">{totalAmount.toLocaleString()} FCFA</span>
+                                        </div>
+                                        <button 
+                                            onClick={() => {
+                                                alert("Commande validée ! Merci de votre confiance.");
+                                                setCart([]);
+                                                setIsCartOpen(false);
+                                            }}
+                                            class="w-full bg-brand-gold hover:bg-brand-gold-hover text-black font-bold py-3 rounded transition text-center"
+                                        >
+                                            Valider la commande
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* MODAL RÉSERVATION */}
+                    {isResaOpen && (
+                        <div class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+                            <div class="bg-brand-card border border-brand-border rounded-lg p-6 max-w-md w-full relative">
+                                <button onClick={() => setIsResaOpen(false)} class="absolute top-4 right-4 text-stone-400 hover:text-white text-xl">&times;</button>
+                                <h3 class="text-2xl font-serif text-brand-gold font-bold mb-4">Réserver une Table</h3>
+                                <form onSubmit={(e) => {
+                                    e.preventDefault();
+                                    alert("Votre demande de réservation a bien été envoyée !");
+                                    setIsResaOpen(false);
+                                }} class="space-y-4">
+                                    <div>
+                                        <label class="block text-xs text-stone-400 mb-1">Nom Complet</label>
+                                        <input type="text" required class="w-full bg-brand-dark border border-brand-border rounded p-2 text-white focus:border-brand-gold outline-none" />
+                                    </div>
+                                    <div class="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label class="block text-xs text-stone-400 mb-1">Date</label>
+                                            <input type="date" required class="w-full bg-brand-dark border border-brand-border rounded p-2 text-white focus:border-brand-gold outline-none" />
+                                        </div>
+                                        <div>
+                                            <label class="block text-xs text-stone-400 mb-1">Heure</label>
+                                            <input type="time" required class="w-full bg-brand-dark border border-brand-border rounded p-2 text-white focus:border-brand-gold outline-none" />
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs text-stone-400 mb-1">Nombre de personnes</label>
+                                        <select class="w-full bg-brand-dark border border-brand-border rounded p-2 text-white focus:border-brand-gold outline-none">
+                                            <option>1 Personne</option>
+                                            <option>2 Personnes</option>
+                                            <option>4 Personnes</option>
+                                            <option>6+ Personnes</option>
+                                        </select>
+                                    </div>
+                                    <button type="submit" class="w-full bg-brand-gold hover:bg-brand-gold-hover text-black font-bold py-3 rounded transition mt-4">
+                                        Confirmer la réservation
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* FOOTER */}
+                    <footer class="mt-auto bg-black border-t border-brand-border py-10 px-6 text-stone-400 text-sm">
+                        <div class="max-w-7xl mx-auto grid md:grid-cols-4 gap-8 mb-8">
+                            <div>
+                                <div class="text-brand-gold font-bold text-xl mb-3">TATA</div>
+                                <p class="text-xs">Sublimer la cuisine africaine dans un cadre moderne et raffiné.</p>
+                            </div>
+                            <div>
+                                <h4 class="text-white font-bold mb-3">Horaires</h4>
+                                <p class="text-xs">Lun - Ven : 11h30 - 23h00</p>
+                                <p class="text-xs">Sam - Dim : 12h00 - 00h00</p>
+                            </div>
+                            <div>
+                                <h4 class="text-white font-bold mb-3">Contact</h4>
+                                <p class="text-xs">Boulevard du 13 Janvier, Lomé</p>
+                                <p class="text-xs">+228 90 00 00 00</p>
+                            </div>
+                            <div>
+                                <h4 class="text-white font-bold mb-3">Suivez-nous</h4>
+                                <div class="flex gap-4 text-brand-gold text-lg">
+                                    <a href="#"><i class="fa-brands fa-instagram"></i></a>
+                                    <a href="#"><i class="fa-brands fa-facebook"></i></a>
+                                    <a href="#"><i class="fa-brands fa-whatsapp"></i></a>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="text-center pt-6 border-t border-brand-border/50 text-xs">
+                            &copy; 2026 TATA Restaurant. Tous droits réservés.
+                        </div>
+                    </footer>
+
+                </div>
+            );
+        }
+
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+</body>
+</html>
